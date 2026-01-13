@@ -1,0 +1,154 @@
+use crate::{Hand, Meld, MeldType, Table, Tile, solver};
+use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+use wasm_bindgen::prelude::*;
+
+/// JSON-serializable representation of a meld
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum MeldJson {
+    #[serde(rename = "group")]
+    Group { tiles: Vec<String> },
+    #[serde(rename = "run")]
+    Run { tiles: Vec<String> },
+}
+
+/// JSON-serializable representation of a solver move
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "action")]
+pub enum MoveJson {
+    #[serde(rename = "pickup")]
+    PickUp { index: usize },
+    #[serde(rename = "laydown")]
+    LayDown { meld: MeldJson },
+}
+
+/// Result of the solver operation
+#[derive(Serialize, Deserialize)]
+pub struct SolverResult {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub moves: Option<Vec<MoveJson>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Main WASM API: Solve a Rummikub game state
+///
+/// # Arguments
+/// * `hand_tiles` - JSON array of tile strings (e.g., ["r1", "b5", "w"])
+/// * `table_melds` - JSON array of meld objects (e.g., [{"type": "run", "tiles": ["r1", "r2", "r3"]}])
+/// * `strategy` - Scoring strategy: "minimize_tiles" or "minimize_points"
+/// * `time_limit_ms` - Maximum time to search in milliseconds
+///
+/// # Returns
+/// JSON string with SolverResult containing success, moves, or error
+#[wasm_bindgen]
+pub fn solve_rummikub(
+    hand_tiles: &str,
+    table_melds: &str,
+    strategy: &str,
+    time_limit_ms: u64,
+) -> String {
+    match solve_internal(hand_tiles, table_melds, strategy, time_limit_ms) {
+        Ok(result) => serde_json::to_string(&result).unwrap(),
+        Err(e) => serde_json::to_string(&SolverResult {
+            success: false,
+            moves: None,
+            error: Some(e),
+        })
+        .unwrap(),
+    }
+}
+
+/// Internal implementation of solve_rummikub
+fn solve_internal(
+    hand_tiles: &str,
+    table_melds: &str,
+    strategy_str: &str,
+    time_limit_ms: u64,
+) -> Result<SolverResult, String> {
+    // 1. Parse hand_tiles JSON into Vec<String>
+    let hand_strs: Vec<String> =
+        serde_json::from_str(hand_tiles).map_err(|e| format!("Invalid hand JSON: {}", e))?;
+
+    // 2. Parse each tile string into Tile
+    let mut hand = Hand::new();
+    for tile_str in hand_strs {
+        let tile = Tile::from_string(&tile_str)?;
+        hand.add(tile);
+    }
+
+    // 3. Parse table_melds JSON
+    let table_json: Vec<MeldJson> =
+        serde_json::from_str(table_melds).map_err(|e| format!("Invalid table JSON: {}", e))?;
+
+    let mut table = Table::new();
+    for meld_json in table_json {
+        let meld = meld_from_json(meld_json)?;
+        table.add_meld(meld);
+    }
+
+    // 4. Parse strategy
+    let strategy = match strategy_str {
+        "minimize_tiles" => solver::ScoringStrategy::MinimizeTiles,
+        "minimize_points" => solver::ScoringStrategy::MinimizePoints,
+        _ => return Err(format!("Unknown strategy: {}", strategy_str)),
+    };
+
+    // 5. Call solver with strategy
+    let moves =
+        solver::find_best_moves_with_strategy(&mut table, &mut hand, time_limit_ms, strategy);
+
+    // 6. Convert result to JSON
+    match moves {
+        Some(moves) => {
+            let moves_json = moves.into_iter().map(move_to_json).collect();
+            Ok(SolverResult {
+                success: true,
+                moves: Some(moves_json),
+                error: None,
+            })
+        }
+        None => Ok(SolverResult {
+            success: false,
+            moves: None,
+            error: Some("No solution found within time limit".to_string()),
+        }),
+    }
+}
+
+/// Convert JSON meld to internal Meld type
+fn meld_from_json(meld_json: MeldJson) -> Result<Meld, String> {
+    let (meld_type, tile_strs) = match meld_json {
+        MeldJson::Group { tiles } => (MeldType::Group, tiles),
+        MeldJson::Run { tiles } => (MeldType::Run, tiles),
+    };
+
+    let mut tiles = VecDeque::new();
+    for tile_str in tile_strs {
+        tiles.push_back(Tile::from_string(&tile_str)?);
+    }
+
+    Ok(Meld::new(meld_type, tiles))
+}
+
+/// Convert internal Meld to JSON representation
+fn meld_to_json(meld: &Meld) -> MeldJson {
+    let tiles: Vec<String> = meld.tiles.iter().map(|t| t.to_string()).collect();
+
+    match meld.meld_type {
+        MeldType::Group => MeldJson::Group { tiles },
+        MeldType::Run => MeldJson::Run { tiles },
+    }
+}
+
+/// Convert internal SolverMove to JSON representation
+fn move_to_json(solver_move: solver::SolverMove) -> MoveJson {
+    match solver_move {
+        solver::SolverMove::PickUp(index) => MoveJson::PickUp { index },
+        solver::SolverMove::LayDown(meld) => MoveJson::LayDown {
+            meld: meld_to_json(&meld),
+        },
+    }
+}
