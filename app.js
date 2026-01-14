@@ -3,7 +3,7 @@ let hand = new Map(); // tile -> count
 let table = []; // array of meld objects
 let wasmModule = null;
 let apiKey = null;
-let modelName = 'openai/gpt-4o'; // default model
+let modelName = 'google/gemini-3-flash-preview'; // default model
 let currentImageMode = null; // 'hand' or 'table'
 
 // Initialize WASM
@@ -154,62 +154,136 @@ function formatTileDisplay(tile) {
     return `${colorMap[tile[0]]}${tile.substring(1)}`;
 }
 
-// Parse group meld: "5 r b k" format (number followed by colors)
+// Parse group meld: "5 r b k" or "b5 r8 k5" format
 function parseGroupTiles(input) {
     const parts = input.toLowerCase().split(/\s+/).filter(p => p);
 
-    if (parts.length < 4) {
-        throw new Error('Group must have at least 4 parts (number + 3 colors)');
+    if (parts.length < 3) {
+        throw new Error('Group must have at least 3 tiles');
     }
 
-    const number = parts[0];
-    const colors = parts.slice(1);
+    // Check if first part is color+number format (e.g., "b5")
+    const firstPart = parts[0];
+    const isColorNumberFormat = /^[rbykw]\d*$/.test(firstPart) || firstPart === 'w';
 
-    // Validate number
-    const numVal = parseInt(number);
-    if (isNaN(numVal) || numVal < 1 || numVal > 13) {
-        throw new Error(`Invalid number: ${number}. Must be 1-13.`);
-    }
-
-    // Validate colors and create tiles
-    const tiles = [];
-    for (const color of colors) {
-        if (!['r', 'b', 'y', 'k', 'w'].includes(color)) {
-            throw new Error(`Invalid color: ${color}. Use r, b, y, k, or w.`);
+    if (isColorNumberFormat) {
+        // Format: "b5 r8 k5" or "b5 r8 w"
+        const tiles = [];
+        for (const part of parts) {
+            if (part === 'w') {
+                tiles.push('w');
+            } else {
+                const match = part.match(/^([rbyk])(\d{1,2})$/);
+                if (!match) {
+                    throw new Error(`Invalid tile format: ${part}. Use format like b5, r12, or w.`);
+                }
+                const color = match[1];
+                const num = parseInt(match[2]);
+                if (num < 1 || num > 13) {
+                    throw new Error(`Invalid number in ${part}. Must be 1-13.`);
+                }
+                tiles.push(`${color}${num}`);
+            }
         }
-        tiles.push(`${color}${number}`);
-    }
+        return tiles;
+    } else {
+        // Format: "5 r b k" or "5 r b w"
+        if (parts.length < 4) {
+            throw new Error('Group must have at least 4 parts (number + 3 colors)');
+        }
 
-    return tiles;
+        const number = parts[0];
+        const colors = parts.slice(1);
+
+        // Validate number
+        const numVal = parseInt(number);
+        if (isNaN(numVal) || numVal < 1 || numVal > 13) {
+            throw new Error(`Invalid number: ${number}. Must be 1-13.`);
+        }
+
+        // Validate colors and create tiles
+        const tiles = [];
+        for (const color of colors) {
+            if (!['r', 'b', 'y', 'k', 'w'].includes(color)) {
+                throw new Error(`Invalid color: ${color}. Use r, b, y, k, or w.`);
+            }
+            if (color === 'w') {
+                tiles.push('w');
+            } else {
+                tiles.push(`${color}${numVal}`);
+            }
+        }
+
+        return tiles;
+    }
 }
 
-// Parse run meld: "y 6 7 8" format (color followed by numbers)
+// Parse run meld: "y 6 7 8" or "y6 y7 y8" format
 function parseRunTiles(input) {
     const parts = input.toLowerCase().split(/\s+/).filter(p => p);
 
-    if (parts.length < 4) {
-        throw new Error('Run must have at least 4 parts (color + 3 numbers)');
+    if (parts.length < 3) {
+        throw new Error('Run must have at least 3 tiles');
     }
 
-    const color = parts[0];
-    const numbers = parts.slice(1);
+    // Check if first part is color+number format (e.g., "y6")
+    const firstPart = parts[0];
+    const isColorNumberFormat = /^[rbykw]\d+$/.test(firstPart) || firstPart === 'w';
 
-    // Validate color
-    if (!['r', 'b', 'y', 'k', 'w'].includes(color)) {
-        throw new Error(`Invalid color: ${color}. Use r, b, y, k, or w.`);
-    }
-
-    // Validate numbers and create tiles
-    const tiles = [];
-    for (const numStr of numbers) {
-        const num = parseInt(numStr);
-        if (isNaN(num) || num < 1 || num > 13) {
-            throw new Error(`Invalid number: ${numStr}. Must be 1-13.`);
+    if (isColorNumberFormat) {
+        // Format: "y6 y7 y8" or "y6 y7 w"
+        const tiles = [];
+        for (const part of parts) {
+            if (part === 'w') {
+                tiles.push('w');
+            } else {
+                const match = part.match(/^([rbyk])(\d{1,2})$/);
+                if (!match) {
+                    throw new Error(`Invalid tile format: ${part}. Use format like y6, b12, or w.`);
+                }
+                const color = match[1];
+                const num = parseInt(match[2]);
+                if (num < 1 || num > 13) {
+                    throw new Error(`Invalid number in ${part}. Must be 1-13.`);
+                }
+                tiles.push(`${color}${num}`);
+            }
         }
-        tiles.push(`${color}${num}`);
-    }
+        return tiles;
+    } else {
+        // Format: "y 6 7 8" or "y 6 7 w"
+        if (parts.length < 4) {
+            throw new Error('Run must have at least 4 parts (color + 3 numbers)');
+        }
 
-    return tiles;
+        const color = parts[0];
+        const numbers = parts.slice(1);
+
+        // Validate color
+        if (!['r', 'b', 'y', 'k', 'w'].includes(color)) {
+            throw new Error(`Invalid color: ${color}. Use r, b, y, k, or w.`);
+        }
+
+        // Validate numbers and create tiles
+        const tiles = [];
+        for (const numStr of numbers) {
+            if (numStr === 'w') {
+                tiles.push('w');
+            } else {
+                const num = parseInt(numStr);
+                if (isNaN(num) || num < 1 || num > 13) {
+                    throw new Error(`Invalid number: ${numStr}. Must be 1-13.`);
+                }
+                if (color === 'w') {
+                    tiles.push('w');
+                } else {
+                    tiles.push(`${color}${num}`);
+                }
+            }
+        }
+
+        return tiles;
+    }
 }
 
 // Add meld to table
