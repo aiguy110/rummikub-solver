@@ -19,12 +19,17 @@
             <div class="dialog-content">
                 <h3>Settings</h3>
                 <div class="settings-group">
-                    <label for="api-key-input">OpenAI API Key</label>
-                    <input type="password" id="api-key-input" class="input" placeholder="sk-...">
-                    <p class="settings-help">Your API key is stored locally in your browser and never sent to our servers.</p>
+                    <label for="api-key-input">OpenRouter API Key</label>
+                    <input type="password" id="api-key-input" class="input" placeholder="sk-or-v1-...">
+                    <p class="settings-help">Get your API key from <a href="https://openrouter.ai/keys" target="_blank">openrouter.ai/keys</a></p>
+                </div>
+                <div class="settings-group">
+                    <label for="model-input">Model</label>
+                    <input type="text" id="model-input" class="input" placeholder="openai/gpt-4o" value="openai/gpt-4o">
+                    <p class="settings-help">Examples: openai/gpt-4o, anthropic/claude-3.5-sonnet, google/gemini-2.0-flash-exp</p>
                 </div>
                 <div class="settings-actions">
-                    <button id="save-api-key-btn" class="btn btn-primary">Save Key</button>
+                    <button id="save-api-key-btn" class="btn btn-primary">Save Settings</button>
                     <button id="close-settings-btn" class="btn btn-secondary">Close</button>
                 </div>
             </div>

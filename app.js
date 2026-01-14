@@ -3,6 +3,7 @@ let hand = new Map(); // tile -> count
 let table = []; // array of meld objects
 let wasmModule = null;
 let apiKey = null;
+let modelName = 'openai/gpt-4o'; // default model
 let currentImageMode = null; // 'hand' or 'table'
 
 // Initialize WASM
@@ -547,31 +548,36 @@ function showSuccess(message) {
 
 // API Key Management
 function loadApiKey() {
-    apiKey = localStorage.getItem('rummikub-openai-api-key');
+    apiKey = localStorage.getItem('rummikub-api-key');
+    modelName = localStorage.getItem('rummikub-model') || 'openai/gpt-4o';
     updateCaptureButtonVisibility();
 }
 
 function saveApiKey() {
-    const input = document.getElementById('api-key-input');
-    const key = input.value.trim();
+    const keyInput = document.getElementById('api-key-input');
+    const modelInput = document.getElementById('model-input');
+    const key = keyInput.value.trim();
+    const model = modelInput.value.trim();
 
     if (!key) {
         showError('Please enter an API key');
         return;
     }
 
-    if (!key.startsWith('sk-')) {
-        showError('API key should start with "sk-"');
+    if (!model) {
+        showError('Please enter a model name');
         return;
     }
 
-    localStorage.setItem('rummikub-openai-api-key', key);
+    localStorage.setItem('rummikub-api-key', key);
+    localStorage.setItem('rummikub-model', model);
     apiKey = key;
-    input.value = '';
+    modelName = model;
+    keyInput.value = '';
 
     document.getElementById('settings-modal').style.display = 'none';
     updateCaptureButtonVisibility();
-    showSuccess('API key saved successfully!');
+    showSuccess('Settings saved successfully!');
 }
 
 function updateCaptureButtonVisibility() {
@@ -602,11 +608,14 @@ function updateCaptureButtonVisibility() {
 // Settings Modal Management
 function openSettingsModal() {
     const modal = document.getElementById('settings-modal');
-    const input = document.getElementById('api-key-input');
+    const keyInput = document.getElementById('api-key-input');
+    const modelInput = document.getElementById('model-input');
 
     if (apiKey) {
-        input.value = apiKey;
+        keyInput.value = apiKey;
     }
+
+    modelInput.value = modelName;
 
     modal.style.display = 'flex';
 }
@@ -631,7 +640,7 @@ async function handleImageUpload(event) {
     if (!file) return;
 
     if (!apiKey) {
-        showError('Please add an OpenAI API key in settings first');
+        showError('Please add an API key in settings first');
         return;
     }
 
@@ -747,14 +756,16 @@ async function processImageWithOpenAI(base64Image, mode) {
         const prompt = mode === 'hand' ? HAND_PROMPT : TABLE_PROMPT;
         const tool = mode === 'hand' ? EXTRACT_HAND_TOOL : EXTRACT_TABLE_TOOL;
 
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'HTTP-Referer': window.location.href,
+                'X-Title': 'Rummikub Solver'
             },
             body: JSON.stringify({
-                model: 'gpt-4o',
+                model: modelName,
                 messages: [
                     {
                         role: 'user',
@@ -785,12 +796,9 @@ async function processImageWithOpenAI(base64Image, mode) {
         if (!response.ok) {
             const errorData = await response.json();
             if (response.status === 401) {
-                showError('Invalid API key. Please check your OpenAI API key in settings.');
-                localStorage.removeItem('rummikub-openai-api-key');
-                apiKey = null;
-                updateCaptureButtonVisibility();
+                showError('Invalid API key. Please check your API key in settings.');
             } else {
-                showError(`OpenAI API error: ${errorData.error?.message || 'Unknown error'}`);
+                showError(`API error: ${errorData.error?.message || 'Unknown error'}`);
             }
             return;
         }
@@ -799,7 +807,7 @@ async function processImageWithOpenAI(base64Image, mode) {
         const toolCall = data.choices[0]?.message?.tool_calls?.[0];
 
         if (!toolCall || !toolCall.function.arguments) {
-            showError('No valid response from OpenAI');
+            showError('No valid response from API');
             return;
         }
 
@@ -942,6 +950,13 @@ function attachEventListeners() {
 
     // Allow Enter key in API key input
     document.getElementById('api-key-input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            saveApiKey();
+        }
+    });
+
+    // Allow Enter key in model input
+    document.getElementById('model-input').addEventListener('keypress', (e) => {
         if (e.key === 'Enter') {
             saveApiKey();
         }
