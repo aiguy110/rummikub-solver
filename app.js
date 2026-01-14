@@ -660,6 +660,8 @@ const HAND_PROMPT = `Analyze this Rummikub hand image and extract all tiles visi
 
 IMPORTANT: If you see duplicate tiles (multiple tiles with the same color and number), you must include each one separately in the output. For example, if you see three red 5s, include "r5" three times in the tiles array.
 
+Only extract tiles that are part of the player's hand. Disregard any tiles that may be laying on the table in the background - focus only on the hand tiles in the foreground.
+
 Count carefully and report each physical tile you see exactly once.`;
 
 const TABLE_PROMPT = `Analyze this image showing Rummikub melds on a table. Extract all melds and identify:
@@ -668,6 +670,8 @@ const TABLE_PROMPT = `Analyze this image showing Rummikub melds on a table. Extr
 
 IMPORTANT: Some melds may be rotated (upside down or sideways). Read the tiles carefully regardless of orientation.
 Process the melds from left to right, top to bottom as they appear in the image.
+
+Only extract tiles that are already played on the table as complete melds. Disregard any tiles that are still part of someone's hand (not yet played on the table).
 
 For each meld, determine whether it's a run or group, then list all tiles in that meld.`;
 
