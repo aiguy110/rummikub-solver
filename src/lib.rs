@@ -86,14 +86,30 @@ impl Tile {
         if self.is_wild() {
             return "w".to_string();
         }
-        let color_char = match self.color().unwrap() {
-            0 => 'r',
-            1 => 'b',
-            2 => 'y',
-            3 => 'k',
-            _ => unreachable!(),
+        let color_char = match self.color() {
+            Some(0) => 'r',
+            Some(1) => 'b',
+            Some(2) => 'y',
+            Some(3) => 'k',
+            None => {
+                // This shouldn't happen - we already checked is_wild()
+                eprintln!("ERROR: Tile has no color but is not wild. Raw value: 0x{:02x}", self.0);
+                return format!("?{}", self.0);
+            }
+            Some(c) => {
+                // This is mathematically impossible since color is 2 bits
+                eprintln!("ERROR: Invalid color value: {}. Raw tile value: 0x{:02x}", c, self.0);
+                return format!("?{}", self.0);
+            }
         };
-        format!("{}{}", color_char, self.number().unwrap())
+        match self.number() {
+            Some(n) => format!("{}{}", color_char, n),
+            None => {
+                // Shouldn't happen for non-wild tiles
+                eprintln!("ERROR: Non-wild tile has no number. Raw value: 0x{:02x}", self.0);
+                format!("?{}", self.0)
+            }
+        }
     }
 }
 
