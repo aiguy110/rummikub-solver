@@ -580,6 +580,12 @@ function updateCaptureButtonVisibility() {
     const cameraTableBtn = document.getElementById('camera-table-btn');
     const galleryTableBtn = document.getElementById('gallery-table-btn');
 
+    // Check if all buttons exist
+    if (!cameraHandBtn || !galleryHandBtn || !cameraTableBtn || !galleryTableBtn) {
+        console.error('One or more capture buttons not found in DOM');
+        return;
+    }
+
     if (apiKey) {
         cameraHandBtn.style.display = 'inline-block';
         galleryHandBtn.style.display = 'inline-block';
