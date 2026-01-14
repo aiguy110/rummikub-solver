@@ -1,6 +1,45 @@
 use crate::{Hand, Meld, MeldType, Table, Tile};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::time::{Duration, Instant};
+
+/// Cross-platform time tracker for timeout handling
+#[derive(Clone, Copy)]
+struct TimeTracker {
+    #[cfg(not(target_arch = "wasm32"))]
+    start: std::time::Instant,
+    #[cfg(target_arch = "wasm32")]
+    start_ms: f64,
+    limit_ms: u64,
+}
+
+impl TimeTracker {
+    fn new(limit_ms: u64) -> Self {
+        Self {
+            #[cfg(not(target_arch = "wasm32"))]
+            start: std::time::Instant::now(),
+            #[cfg(target_arch = "wasm32")]
+            start_ms: web_sys::window()
+                .and_then(|w| w.performance())
+                .map(|p| p.now())
+                .unwrap_or(0.0),
+            limit_ms,
+        }
+    }
+
+    fn is_expired(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.start.elapsed() >= std::time::Duration::from_millis(self.limit_ms)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let now = web_sys::window()
+                .and_then(|w| w.performance())
+                .map(|p| p.now())
+                .unwrap_or(0.0);
+            (now - self.start_ms) >= self.limit_ms as f64
+        }
+    }
+}
 
 /// Represents a solver move in the Rummikub game
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,8 +124,7 @@ fn find_best_moves_internal<F>(
 where
     F: Fn(&Hand) -> i32 + Copy,
 {
-    let start_time = Instant::now();
-    let time_limit = Duration::from_millis(max_ms);
+    let timer = TimeTracker::new(max_ms);
     let original_hand = hand.clone();
     let original_table = table.clone();
 
@@ -108,7 +146,7 @@ where
 
     for depth in 1..=max_depth {
         // Check time limit
-        if start_time.elapsed() >= time_limit {
+        if timer.is_expired() {
             *hand = original_hand;
             *table = original_table;
             return None;
@@ -121,8 +159,7 @@ where
             &original_hand,
             depth,
             quality,
-            start_time,
-            time_limit,
+            &timer,
         ) {
             // Restore state
             *hand = original_hand;
@@ -144,8 +181,7 @@ fn try_remove_combinations<F>(
     original_hand: &Hand,
     count: usize,
     quality: F,
-    start_time: Instant,
-    time_limit: Duration,
+    timer: &TimeTracker,
 ) -> Option<Vec<SolverMove>>
 where
     F: Fn(&Hand) -> i32 + Copy,
@@ -163,7 +199,7 @@ where
 
     loop {
         // Check time limit
-        if start_time.elapsed() >= time_limit {
+        if timer.is_expired() {
             return None;
         }
 
