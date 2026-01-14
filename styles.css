@@ -322,6 +322,11 @@ header {
     min-width: 150px;
 }
 
+/* Capture Buttons Spacing */
+.capture-buttons {
+    margin-top: 12px;
+}
+
 /* Buttons */
 .btn {
     padding: 12px 24px;
