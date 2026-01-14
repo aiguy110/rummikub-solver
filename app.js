@@ -28,17 +28,17 @@ function initUI() {
 // Create tile picker buttons
 function createTilePicker() {
     const colors = [
-        { name: 'red', element: document.getElementById('red-tiles') },
-        { name: 'blue', element: document.getElementById('blue-tiles') },
-        { name: 'yellow', element: document.getElementById('yellow-tiles') },
-        { name: 'black', element: document.getElementById('black-tiles') }
+        { name: 'red', code: 'r', element: document.getElementById('red-tiles') },
+        { name: 'blue', code: 'b', element: document.getElementById('blue-tiles') },
+        { name: 'yellow', code: 'y', element: document.getElementById('yellow-tiles') },
+        { name: 'black', code: 'k', element: document.getElementById('black-tiles') }
     ];
 
-    colors.forEach(({ name, element }) => {
+    colors.forEach(({ name, code, element }) => {
         for (let num = 1; num <= 13; num++) {
             const btn = document.createElement('button');
             btn.className = `tile-btn ${name}`;
-            btn.dataset.tile = `${name[0]}${num}`;
+            btn.dataset.tile = `${code}${num}`;
             btn.textContent = num;
             btn.addEventListener('click', () => addTileToHand(btn.dataset.tile));
             element.appendChild(btn);
@@ -49,12 +49,9 @@ function createTilePicker() {
 // Add tile to hand
 function addTileToHand(tileStr) {
     const currentCount = hand.get(tileStr) || 0;
-    // Max 2 of each tile (standard Rummikub rules)
-    if (currentCount < 2) {
-        hand.set(tileStr, currentCount + 1);
-        updateHandDisplay();
-        updateTileCounts();
-    }
+    hand.set(tileStr, currentCount + 1);
+    updateHandDisplay();
+    updateTileCounts();
 }
 
 // Remove tile from hand
@@ -275,7 +272,7 @@ async function solve() {
             JSON.stringify(handArray),
             JSON.stringify(table),
             strategy,
-            timeLimit
+            BigInt(timeLimit)
         );
 
         const result = JSON.parse(resultJson);
