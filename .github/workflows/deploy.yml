@@ -41,6 +41,10 @@ jobs:
           cp -r pkg dist/
           touch dist/.nojekyll
 
+          # Inject commit hash into footer
+          COMMIT_HASH=$(git rev-parse --short=8 HEAD)
+          sed -i "s/{{COMMIT_HASH}}/$COMMIT_HASH/g" dist/index.html
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
