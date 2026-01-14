@@ -11,7 +11,24 @@
         <header>
             <h1>🎲 Rummikub Solver</h1>
             <p class="subtitle">Find the best moves for your hand</p>
+            <button id="settings-btn" class="settings-btn" title="Settings">⚙️</button>
         </header>
+
+        <!-- Settings Modal -->
+        <div id="settings-modal" class="dialog" style="display: none;">
+            <div class="dialog-content">
+                <h3>Settings</h3>
+                <div class="settings-group">
+                    <label for="api-key-input">OpenAI API Key</label>
+                    <input type="password" id="api-key-input" class="input" placeholder="sk-...">
+                    <p class="settings-help">Your API key is stored locally in your browser and never sent to our servers.</p>
+                </div>
+                <div class="settings-actions">
+                    <button id="save-api-key-btn" class="btn btn-primary">Save Key</button>
+                    <button id="close-settings-btn" class="btn btn-secondary">Close</button>
+                </div>
+            </div>
+        </div>
 
         <!-- Hand Builder Section -->
         <section class="section">
@@ -44,7 +61,10 @@
                 <div id="hand-display" class="hand-display">
                     <p class="empty-message">Tap tiles above to add them to your hand</p>
                 </div>
-                <button id="clear-hand-btn" class="btn btn-secondary">Clear Hand</button>
+                <div class="hand-actions">
+                    <button id="clear-hand-btn" class="btn btn-secondary">Clear Hand</button>
+                    <button id="capture-hand-btn" class="btn btn-secondary" style="display: none;">📷 Capture from Image</button>
+                </div>
             </div>
         </section>
 
@@ -61,6 +81,7 @@
                 </select>
                 <input type="text" id="meld-tiles" class="input" placeholder="Run: y 6 7 8 | Group: 5 r b k">
                 <button id="add-meld-btn" class="btn btn-secondary">Add Meld</button>
+                <button id="capture-table-btn" class="btn btn-secondary" style="display: none;">📷 Capture from Image</button>
             </div>
         </section>
 
@@ -113,6 +134,9 @@
             <button id="close-dialog-btn" class="btn btn-secondary">Cancel</button>
         </div>
     </div>
+
+    <!-- Hidden file input for image capture -->
+    <input type="file" id="image-input" style="display: none;" accept="image/*" capture="environment">
 
     <script type="module" src="app.js"></script>
 </body>

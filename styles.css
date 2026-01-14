@@ -55,6 +55,31 @@ header h1 {
     font-size: 0.95rem;
 }
 
+header {
+    position: relative;
+}
+
+.settings-btn {
+    position: absolute;
+    top: 0;
+    right: 0;
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 8px;
+    transition: transform 0.2s;
+    touch-action: manipulation;
+}
+
+.settings-btn:hover {
+    transform: scale(1.1);
+}
+
+.settings-btn:active {
+    transform: scale(0.95);
+}
+
 /* Sections */
 .section {
     background: var(--color-surface);
@@ -159,6 +184,12 @@ header h1 {
 /* Current Hand Display */
 .current-hand {
     margin-top: 20px;
+}
+
+.hand-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 
 .hand-display {
@@ -496,6 +527,40 @@ header h1 {
     background: var(--color-border);
 }
 
+/* Settings Modal */
+.settings-group {
+    margin-bottom: 20px;
+}
+
+.settings-group label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: var(--color-text);
+}
+
+.settings-group input {
+    width: 100%;
+    margin-bottom: 8px;
+}
+
+.settings-help {
+    font-size: 0.85rem;
+    color: var(--color-text-light);
+    margin-top: 4px;
+}
+
+.settings-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.settings-actions .btn {
+    flex: 1;
+    min-width: 120px;
+}
+
 /* Footer */
 footer {
     text-align: center;
@@ -537,6 +602,10 @@ footer a:hover {
         font-size: 1.5rem;
     }
 
+    header {
+        padding-right: 50px;
+    }
+
     .controls-grid {
         grid-template-columns: 1fr;
     }
@@ -556,6 +625,22 @@ footer a:hover {
 
     .save-load-controls .input,
     .save-load-controls .btn {
+        width: 100%;
+    }
+
+    .hand-actions {
+        flex-direction: column;
+    }
+
+    .hand-actions .btn {
+        width: 100%;
+    }
+
+    .settings-actions {
+        flex-direction: column;
+    }
+
+    .settings-actions .btn {
         width: 100%;
     }
 }

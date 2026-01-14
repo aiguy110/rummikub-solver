@@ -2,6 +2,8 @@
 let hand = new Map(); // tile -> count
 let table = []; // array of meld objects
 let wasmModule = null;
+let apiKey = null;
+let currentImageMode = null; // 'hand' or 'table'
 
 // Initialize WASM
 async function initWasm() {
@@ -22,6 +24,7 @@ function initUI() {
     updateHandDisplay();
     updateTableDisplay();
     loadSavedStates();
+    loadApiKey();
     attachEventListeners();
 }
 
@@ -542,6 +545,263 @@ function showSuccess(message) {
     }, 3000);
 }
 
+// API Key Management
+function loadApiKey() {
+    apiKey = localStorage.getItem('rummikub-openai-api-key');
+    updateCaptureButtonVisibility();
+}
+
+function saveApiKey() {
+    const input = document.getElementById('api-key-input');
+    const key = input.value.trim();
+
+    if (!key) {
+        showError('Please enter an API key');
+        return;
+    }
+
+    if (!key.startsWith('sk-')) {
+        showError('API key should start with "sk-"');
+        return;
+    }
+
+    localStorage.setItem('rummikub-openai-api-key', key);
+    apiKey = key;
+    input.value = '';
+
+    document.getElementById('settings-modal').style.display = 'none';
+    updateCaptureButtonVisibility();
+    showSuccess('API key saved successfully!');
+}
+
+function updateCaptureButtonVisibility() {
+    const handBtn = document.getElementById('capture-hand-btn');
+    const tableBtn = document.getElementById('capture-table-btn');
+
+    if (apiKey) {
+        handBtn.style.display = 'inline-block';
+        tableBtn.style.display = 'inline-block';
+    } else {
+        handBtn.style.display = 'none';
+        tableBtn.style.display = 'none';
+    }
+}
+
+// Settings Modal Management
+function openSettingsModal() {
+    const modal = document.getElementById('settings-modal');
+    const input = document.getElementById('api-key-input');
+
+    if (apiKey) {
+        input.value = apiKey;
+    }
+
+    modal.style.display = 'flex';
+}
+
+function closeSettingsModal() {
+    document.getElementById('settings-modal').style.display = 'none';
+}
+
+// Image Capture and Processing
+function captureImage(mode) {
+    currentImageMode = mode;
+    document.getElementById('image-input').click();
+}
+
+async function handleImageUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    if (!apiKey) {
+        showError('Please add an OpenAI API key in settings first');
+        return;
+    }
+
+    // Convert image to base64
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+        const base64Image = e.target.result.split(',')[1];
+        await processImageWithOpenAI(base64Image, currentImageMode);
+    };
+    reader.readAsDataURL(file);
+
+    // Reset file input
+    event.target.value = '';
+}
+
+async function processImageWithOpenAI(base64Image, mode) {
+    const btn = currentImageMode === 'hand'
+        ? document.getElementById('capture-hand-btn')
+        : document.getElementById('capture-table-btn');
+
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ Processing...';
+
+    try {
+        const prompt = mode === 'hand'
+            ? `Analyze this Rummikub hand image and extract all tiles visible. For each tile, identify:
+- The color: red (r), blue (b), yellow (y), or black (k)
+- The number: 1-13
+- Any wild/joker tiles (w)
+
+Return the result as a JSON object with a "tiles" array, where each tile is represented as a string (e.g., "r5", "b12", "k1", "w" for wild).
+Example: {"tiles": ["r1", "r2", "b5", "y10", "w"]}`
+            : `Analyze this image showing Rummikub melds on a table. Extract all melds and identify:
+- The meld type: either "run" (consecutive numbers, same color) or "group" (same number, different colors)
+- For each meld, list the tiles with color and number
+
+Return the result as a JSON object with a "melds" array. Each meld object should have:
+- "type": "run" or "group"
+- "tiles": array of tile strings (e.g., ["y6", "y7", "y8"] for a yellow run, or ["r5", "b5", "k5"] for a group)
+
+Example: {"melds": [{"type": "run", "tiles": ["r1", "r2", "r3"]}, {"type": "group", "tiles": ["b7", "y7", "k7"]}]}`;
+
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'gpt-4o',
+                messages: [
+                    {
+                        role: 'user',
+                        content: [
+                            {
+                                type: 'image_url',
+                                image_url: {
+                                    url: `data:image/jpeg;base64,${base64Image}`
+                                }
+                            },
+                            {
+                                type: 'text',
+                                text: prompt
+                            }
+                        ]
+                    }
+                ],
+                max_tokens: 1024,
+                temperature: 0.7
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            if (response.status === 401) {
+                showError('Invalid API key. Please check your OpenAI API key in settings.');
+                localStorage.removeItem('rummikub-openai-api-key');
+                apiKey = null;
+                updateCaptureButtonVisibility();
+            } else {
+                showError(`OpenAI API error: ${errorData.error?.message || 'Unknown error'}`);
+            }
+            return;
+        }
+
+        const data = await response.json();
+        const content = data.choices[0]?.message?.content;
+
+        if (!content) {
+            showError('No response from OpenAI');
+            return;
+        }
+
+        // Extract JSON from response
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+            showError('Could not parse response from OpenAI');
+            return;
+        }
+
+        const result = JSON.parse(jsonMatch[0]);
+
+        if (mode === 'hand') {
+            updateHandFromImage(result);
+        } else {
+            updateTableFromImage(result);
+        }
+
+    } catch (error) {
+        console.error('Error processing image:', error);
+        showError(`Error: ${error.message}`);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
+
+function updateHandFromImage(result) {
+    if (!result.tiles || !Array.isArray(result.tiles)) {
+        showError('Invalid response format from OpenAI');
+        return;
+    }
+
+    // Clear existing hand and add new tiles
+    hand.clear();
+
+    try {
+        for (const tile of result.tiles) {
+            if (!isValidTile(tile)) {
+                throw new Error(`Invalid tile: ${tile}`);
+            }
+            const count = hand.get(tile) || 0;
+            hand.set(tile, count + 1);
+        }
+
+        updateHandDisplay();
+        updateTileCounts();
+        showSuccess(`Imported ${result.tiles.length} tiles from image!`);
+    } catch (error) {
+        showError(`Error updating hand: ${error.message}`);
+        hand.clear();
+        updateHandDisplay();
+    }
+}
+
+function updateTableFromImage(result) {
+    if (!result.melds || !Array.isArray(result.melds)) {
+        showError('Invalid response format from OpenAI');
+        return;
+    }
+
+    try {
+        // Clear existing table and add new melds
+        table = [];
+
+        for (const meld of result.melds) {
+            if (!meld.type || !Array.isArray(meld.tiles)) {
+                throw new Error('Invalid meld format');
+            }
+
+            // Validate all tiles
+            for (const tile of meld.tiles) {
+                if (!isValidTile(tile)) {
+                    throw new Error(`Invalid tile: ${tile}`);
+                }
+            }
+
+            if (meld.tiles.length < 3) {
+                throw new Error(`Meld must have at least 3 tiles, got ${meld.tiles.length}`);
+            }
+
+            table.push({
+                type: meld.type,
+                tiles: meld.tiles
+            });
+        }
+
+        updateTableDisplay();
+        showSuccess(`Imported ${result.melds.length} melds from image!`);
+    } catch (error) {
+        showError(`Error updating table: ${error.message}`);
+        table = [];
+        updateTableDisplay();
+    }
+}
+
 // Clear hand
 function clearHand() {
     hand.clear();
@@ -551,10 +811,28 @@ function clearHand() {
 
 // Attach event listeners
 function attachEventListeners() {
+    // Existing listeners
     document.getElementById('add-meld-btn').addEventListener('click', addMeldToTable);
     document.getElementById('solve-btn').addEventListener('click', solve);
     document.getElementById('save-btn').addEventListener('click', saveState);
     document.getElementById('clear-hand-btn').addEventListener('click', clearHand);
+
+    // Settings modal
+    document.getElementById('settings-btn').addEventListener('click', openSettingsModal);
+    document.getElementById('close-settings-btn').addEventListener('click', closeSettingsModal);
+    document.getElementById('save-api-key-btn').addEventListener('click', saveApiKey);
+
+    // Image capture
+    document.getElementById('capture-hand-btn').addEventListener('click', () => captureImage('hand'));
+    document.getElementById('capture-table-btn').addEventListener('click', () => captureImage('table'));
+    document.getElementById('image-input').addEventListener('change', handleImageUpload);
+
+    // Close modal when clicking outside
+    document.getElementById('settings-modal').addEventListener('click', (e) => {
+        if (e.target.id === 'settings-modal') {
+            closeSettingsModal();
+        }
+    });
 
     // Allow Enter key to add meld
     document.getElementById('meld-tiles').addEventListener('keypress', (e) => {
@@ -569,12 +847,20 @@ function attachEventListeners() {
             saveState();
         }
     });
+
+    // Allow Enter key in API key input
+    document.getElementById('api-key-input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            saveApiKey();
+        }
+    });
 }
 
 // Make functions global for onclick handlers
 window.removeTileFromHand = removeTileFromHand;
 window.removeMeldFromTable = removeMeldFromTable;
 window.deleteSavedState = deleteSavedState;
+window.captureImage = captureImage;
 
 // Initialize app
 initWasm().then(() => {
