@@ -426,10 +426,6 @@ function showError(message) {
 
     section.style.display = 'block';
     display.innerHTML = `<div class="result-error">${message}</div>`;
-
-    setTimeout(() => {
-        section.style.display = 'none';
-    }, 5000);
 }
 
 // Save current state
@@ -794,24 +790,49 @@ async function processImageWithOpenAI(base64Image, mode) {
         });
 
         if (!response.ok) {
-            const errorData = await response.json();
-            if (response.status === 401) {
-                showError('Invalid API key. Please check your API key in settings.');
-            } else {
-                showError(`API error: ${errorData.error?.message || 'Unknown error'}`);
+            let errorMessage = `API Error (HTTP ${response.status})`;
+
+            try {
+                const errorData = await response.json();
+                if (errorData.error?.message) {
+                    errorMessage += `: ${errorData.error.message}`;
+                } else if (errorData.message) {
+                    errorMessage += `: ${errorData.message}`;
+                }
+            } catch (e) {
+                // If response is not JSON, use status text
+                errorMessage += `: ${response.statusText || 'Unknown error'}`;
             }
+
+            if (response.status === 401) {
+                errorMessage += ' - Please check your API key in settings.';
+            }
+
+            showError(errorMessage);
             return;
         }
 
         const data = await response.json();
-        const toolCall = data.choices[0]?.message?.tool_calls?.[0];
 
-        if (!toolCall || !toolCall.function.arguments) {
-            showError('No valid response from API');
+        if (!data.choices || data.choices.length === 0) {
+            showError('Invalid API response: No choices returned');
             return;
         }
 
-        const result = JSON.parse(toolCall.function.arguments);
+        const toolCall = data.choices[0]?.message?.tool_calls?.[0];
+
+        if (!toolCall || !toolCall.function?.arguments) {
+            showError('Invalid API response: No tool call or function arguments returned');
+            return;
+        }
+
+        let result;
+        try {
+            result = JSON.parse(toolCall.function.arguments);
+        } catch (e) {
+            showError(`Invalid API response: Failed to parse function arguments - ${e.message}`);
+            return;
+        }
 
         if (mode === 'hand') {
             updateHandFromImage(result);
@@ -821,7 +842,8 @@ async function processImageWithOpenAI(base64Image, mode) {
 
     } catch (error) {
         console.error('Error processing image:', error);
-        showError(`Error: ${error.message}`);
+        const errorType = error.name === 'TypeError' ? 'Network error' : 'Error';
+        showError(`${errorType}: ${error.message || 'Unknown error occurred'}`);
     } finally {
         buttons.forEach((btn, index) => {
             btn.disabled = false;
