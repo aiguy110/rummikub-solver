@@ -150,6 +150,64 @@ function formatTileDisplay(tile) {
     return `${colorMap[tile[0]]}${tile.substring(1)}`;
 }
 
+// Parse group meld: "5 r b k" format (number followed by colors)
+function parseGroupTiles(input) {
+    const parts = input.toLowerCase().split(/\s+/).filter(p => p);
+
+    if (parts.length < 4) {
+        throw new Error('Group must have at least 4 parts (number + 3 colors)');
+    }
+
+    const number = parts[0];
+    const colors = parts.slice(1);
+
+    // Validate number
+    const numVal = parseInt(number);
+    if (isNaN(numVal) || numVal < 1 || numVal > 13) {
+        throw new Error(`Invalid number: ${number}. Must be 1-13.`);
+    }
+
+    // Validate colors and create tiles
+    const tiles = [];
+    for (const color of colors) {
+        if (!['r', 'b', 'y', 'k', 'w'].includes(color)) {
+            throw new Error(`Invalid color: ${color}. Use r, b, y, k, or w.`);
+        }
+        tiles.push(`${color}${number}`);
+    }
+
+    return tiles;
+}
+
+// Parse run meld: "y 6 7 8" format (color followed by numbers)
+function parseRunTiles(input) {
+    const parts = input.toLowerCase().split(/\s+/).filter(p => p);
+
+    if (parts.length < 4) {
+        throw new Error('Run must have at least 4 parts (color + 3 numbers)');
+    }
+
+    const color = parts[0];
+    const numbers = parts.slice(1);
+
+    // Validate color
+    if (!['r', 'b', 'y', 'k', 'w'].includes(color)) {
+        throw new Error(`Invalid color: ${color}. Use r, b, y, k, or w.`);
+    }
+
+    // Validate numbers and create tiles
+    const tiles = [];
+    for (const numStr of numbers) {
+        const num = parseInt(numStr);
+        if (isNaN(num) || num < 1 || num > 13) {
+            throw new Error(`Invalid number: ${numStr}. Must be 1-13.`);
+        }
+        tiles.push(`${color}${num}`);
+    }
+
+    return tiles;
+}
+
 // Add meld to table
 function addMeldToTable() {
     const typeSelect = document.getElementById('meld-type');
@@ -163,27 +221,30 @@ function addMeldToTable() {
         return;
     }
 
-    // Parse tiles (space-separated)
-    const tiles = tilesStr.toLowerCase().split(/\s+/);
-
-    // Validate tiles
-    for (const tile of tiles) {
-        if (!isValidTile(tile)) {
-            showError(`Invalid tile: ${tile}`);
+    try {
+        let tiles;
+        if (type === 'group') {
+            tiles = parseGroupTiles(tilesStr);
+        } else if (type === 'run') {
+            tiles = parseRunTiles(tilesStr);
+        } else {
+            showError('Invalid meld type');
             return;
         }
+
+        if (tiles.length < 3) {
+            showError('A meld must have at least 3 tiles');
+            return;
+        }
+
+        const meld = { type, tiles };
+        table.push(meld);
+
+        updateTableDisplay();
+        tilesInput.value = '';
+    } catch (error) {
+        showError(`Invalid input: ${error.message}`);
     }
-
-    if (tiles.length < 3) {
-        showError('A meld must have at least 3 tiles');
-        return;
-    }
-
-    const meld = { type, tiles };
-    table.push(meld);
-
-    updateTableDisplay();
-    tilesInput.value = '';
 }
 
 // Validate tile string

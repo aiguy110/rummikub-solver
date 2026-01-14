@@ -134,6 +134,126 @@ impl Meld {
     pub fn new(meld_type: MeldType, tiles: VecDeque<Tile>) -> Self {
         Meld { meld_type, tiles }
     }
+
+    /// Parse a meld from a string, auto-detecting type
+    /// Formats:
+    /// - Group: "5 r b k" (number followed by color letters)
+    /// - Run: "y 6 7 8" (color letter followed by numbers)
+    pub fn from_string(input: &str) -> Result<Self, String> {
+        let tokens: Vec<&str> = input.split_whitespace().collect();
+        if tokens.is_empty() {
+            return Err("Empty meld string".to_string());
+        }
+
+        // Check if first token is a digit (1-13) → Group
+        // Otherwise should be a color letter → Run
+        if let Ok(num) = tokens[0].parse::<u8>() {
+            if (1..=13).contains(&num) {
+                return Self::from_group_string(input);
+            }
+        }
+
+        // Check if first token is a valid color
+        if matches!(tokens[0], "r" | "b" | "y" | "k") {
+            return Self::from_run_string(input);
+        }
+
+        Err(format!(
+            "Invalid meld format: '{}'. Use 'N c1 c2 c3' for group or 'C n1 n2 n3' for run",
+            input
+        ))
+    }
+
+    /// Parse a group meld: "5 r b k" (number followed by color letters)
+    pub fn from_group_string(input: &str) -> Result<Self, String> {
+        let tokens: Vec<&str> = input.split_whitespace().collect();
+        if tokens.len() < 4 {
+            return Err(format!(
+                "Group must have at least 4 tokens (number + 3 colors), got: {}",
+                tokens.len()
+            ));
+        }
+
+        // Parse number
+        let number: u8 = tokens[0]
+            .parse()
+            .map_err(|_| format!("Invalid number: {}", tokens[0]))?;
+
+        if !(1..=13).contains(&number) {
+            return Err(format!("Number must be 1-13, got {}", number));
+        }
+
+        // Parse colors and create tiles
+        let mut tiles = VecDeque::new();
+        for color_char in &tokens[1..] {
+            let color = match *color_char {
+                "r" => 0,
+                "b" => 1,
+                "y" => 2,
+                "k" => 3,
+                "w" => {
+                    // Allow wildcard in groups
+                    tiles.push_back(Tile::wild());
+                    continue;
+                }
+                _ => return Err(format!("Invalid color: {}", color_char)),
+            };
+            tiles.push_back(Tile::new(color, number));
+        }
+
+        if tiles.len() < 3 {
+            return Err(format!("Group must have at least 3 tiles, got {}", tiles.len()));
+        }
+
+        Ok(Meld::new(MeldType::Group, tiles))
+    }
+
+    /// Parse a run meld: "y 6 7 8" (color letter followed by numbers)
+    pub fn from_run_string(input: &str) -> Result<Self, String> {
+        let tokens: Vec<&str> = input.split_whitespace().collect();
+        if tokens.len() < 4 {
+            return Err(format!(
+                "Run must have at least 4 tokens (color + 3 numbers), got: {}",
+                tokens.len()
+            ));
+        }
+
+        // Parse color
+        let color = match tokens[0] {
+            "r" => 0,
+            "b" => 1,
+            "y" => 2,
+            "k" => 3,
+            "w" => {
+                return Err("Wildcard cannot be the starting color of a run".to_string());
+            }
+            _ => return Err(format!("Invalid color: {}", tokens[0])),
+        };
+
+        // Parse numbers and create tiles
+        let mut tiles = VecDeque::new();
+        for num_str in &tokens[1..] {
+            if *num_str == "w" {
+                tiles.push_back(Tile::wild());
+            } else {
+                let number: u8 = num_str
+                    .parse()
+                    .map_err(|_| format!("Invalid number: {}", num_str))?;
+
+                if !(1..=13).contains(&number) {
+                    return Err(format!("Number must be 1-13, got {}", number));
+                }
+
+                tiles.push_back(Tile::new(color, number));
+            }
+        }
+
+        if tiles.len() < 3 {
+            return Err(format!("Run must have at least 3 tiles, got {}", tiles.len()));
+        }
+
+        Ok(Meld::new(MeldType::Run, tiles))
+    }
 }
 
 /// A player's hand of tiles

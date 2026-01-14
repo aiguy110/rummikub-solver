@@ -1,7 +1,36 @@
-use rummikub_solver::{Hand, Tile};
+use rummikub_solver::{Hand, Meld, Tile};
 
 fn main() {
     println!("Rummikub Solver\n");
+
+    // Demo 1: Parsing melds from strings
+    println!("=== Meld Parsing Examples ===\n");
+
+    // Parse a group: "5 r b k" (all 5s, different colors)
+    match Meld::from_string("5 r b k") {
+        Ok(meld) => println!("✓ Parsed group: {:?}", format_meld_for_display(&meld)),
+        Err(e) => println!("✗ Error parsing group: {}", e),
+    }
+
+    // Parse a run: "r 5 6 7" (red color, consecutive numbers)
+    match Meld::from_string("r 5 6 7") {
+        Ok(meld) => println!("✓ Parsed run: {:?}", format_meld_for_display(&meld)),
+        Err(e) => println!("✗ Error parsing run: {}", e),
+    }
+
+    // Parse a group with wildcard: "7 r b w"
+    match Meld::from_string("7 r b w") {
+        Ok(meld) => println!("✓ Parsed group with wildcard: {:?}", format_meld_for_display(&meld)),
+        Err(e) => println!("✗ Error parsing group: {}", e),
+    }
+
+    // Parse a run with wildcard: "y 1 w 3"
+    match Meld::from_string("y 1 w 3") {
+        Ok(meld) => println!("✓ Parsed run with wildcard: {:?}", format_meld_for_display(&meld)),
+        Err(e) => println!("✗ Error parsing run: {}", e),
+    }
+
+    println!();
 
     // Example: Find best melds from a hand
     let mut hand = Hand::new();
