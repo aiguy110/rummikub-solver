@@ -575,15 +575,21 @@ function saveApiKey() {
 }
 
 function updateCaptureButtonVisibility() {
-    const handBtn = document.getElementById('capture-hand-btn');
-    const tableBtn = document.getElementById('capture-table-btn');
+    const cameraHandBtn = document.getElementById('camera-hand-btn');
+    const galleryHandBtn = document.getElementById('gallery-hand-btn');
+    const cameraTableBtn = document.getElementById('camera-table-btn');
+    const galleryTableBtn = document.getElementById('gallery-table-btn');
 
     if (apiKey) {
-        handBtn.style.display = 'inline-block';
-        tableBtn.style.display = 'inline-block';
+        cameraHandBtn.style.display = 'inline-block';
+        galleryHandBtn.style.display = 'inline-block';
+        cameraTableBtn.style.display = 'inline-block';
+        galleryTableBtn.style.display = 'inline-block';
     } else {
-        handBtn.style.display = 'none';
-        tableBtn.style.display = 'none';
+        cameraHandBtn.style.display = 'none';
+        galleryHandBtn.style.display = 'none';
+        cameraTableBtn.style.display = 'none';
+        galleryTableBtn.style.display = 'none';
     }
 }
 
@@ -604,9 +610,14 @@ function closeSettingsModal() {
 }
 
 // Image Capture and Processing
-function captureImage(mode) {
+function captureImageFromCamera(mode) {
     currentImageMode = mode;
-    document.getElementById('image-input').click();
+    document.getElementById('camera-input').click();
+}
+
+function captureImageFromGallery(mode) {
+    currentImageMode = mode;
+    document.getElementById('gallery-input').click();
 }
 
 async function handleImageUpload(event) {
@@ -630,33 +641,105 @@ async function handleImageUpload(event) {
     event.target.value = '';
 }
 
-async function processImageWithOpenAI(base64Image, mode) {
-    const btn = currentImageMode === 'hand'
-        ? document.getElementById('capture-hand-btn')
-        : document.getElementById('capture-table-btn');
-
-    const originalText = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = '⏳ Processing...';
-
-    try {
-        const prompt = mode === 'hand'
-            ? `Analyze this Rummikub hand image and extract all tiles visible. For each tile, identify:
+// Prompts for image analysis
+const HAND_PROMPT = `Analyze this Rummikub hand image and extract all tiles visible. For each tile, identify:
 - The color: red (r), blue (b), yellow (y), or black (k)
 - The number: 1-13
 - Any wild/joker tiles (w)
 
-Return the result as a JSON object with a "tiles" array, where each tile is represented as a string (e.g., "r5", "b12", "k1", "w" for wild).
-Example: {"tiles": ["r1", "r2", "b5", "y10", "w"]}`
-            : `Analyze this image showing Rummikub melds on a table. Extract all melds and identify:
+IMPORTANT: If you see duplicate tiles (multiple tiles with the same color and number), you must include each one separately in the output. For example, if you see three red 5s, include "r5" three times in the tiles array.
+
+Count carefully and report each physical tile you see exactly once.`;
+
+const TABLE_PROMPT = `Analyze this image showing Rummikub melds on a table. Extract all melds and identify:
 - The meld type: either "run" (consecutive numbers, same color) or "group" (same number, different colors)
 - For each meld, list the tiles with color and number
 
-Return the result as a JSON object with a "melds" array. Each meld object should have:
-- "type": "run" or "group"
-- "tiles": array of tile strings (e.g., ["y6", "y7", "y8"] for a yellow run, or ["r5", "b5", "k5"] for a group)
+IMPORTANT: Some melds may be rotated (upside down or sideways). Read the tiles carefully regardless of orientation.
+Process the melds from left to right, top to bottom as they appear in the image.
 
-Example: {"melds": [{"type": "run", "tiles": ["r1", "r2", "r3"]}, {"type": "group", "tiles": ["b7", "y7", "k7"]}]}`;
+For each meld, determine whether it's a run or group, then list all tiles in that meld.`;
+
+// Function schemas for OpenAI tool calling
+const EXTRACT_HAND_TOOL = {
+    type: "function",
+    function: {
+        name: "extract_hand_tiles",
+        description: "Extract all Rummikub tiles from a hand image",
+        parameters: {
+            type: "object",
+            properties: {
+                tiles: {
+                    type: "array",
+                    description: "Array of tile strings. Each tile is represented as color+number (e.g., 'r5', 'b12', 'k1') or 'w' for wild. Include duplicates separately.",
+                    items: {
+                        type: "string",
+                        pattern: "^([rbyk](1[0-3]|[1-9])|w)$"
+                    }
+                }
+            },
+            required: ["tiles"]
+        }
+    }
+};
+
+const EXTRACT_TABLE_TOOL = {
+    type: "function",
+    function: {
+        name: "extract_table_melds",
+        description: "Extract all Rummikub melds from a table image",
+        parameters: {
+            type: "object",
+            properties: {
+                melds: {
+                    type: "array",
+                    description: "Array of meld objects found on the table, ordered left to right, top to bottom",
+                    items: {
+                        type: "object",
+                        properties: {
+                            type: {
+                                type: "string",
+                                enum: ["run", "group"],
+                                description: "Type of meld: 'run' for consecutive numbers with same color, 'group' for same number with different colors"
+                            },
+                            tiles: {
+                                type: "array",
+                                description: "Array of tile strings in this meld (e.g., ['y6', 'y7', 'y8'] or ['r5', 'b5', 'k5'])",
+                                items: {
+                                    type: "string",
+                                    pattern: "^([rbyk](1[0-3]|[1-9])|w)$"
+                                }
+                            }
+                        },
+                        required: ["type", "tiles"]
+                    }
+                }
+            },
+            required: ["melds"]
+        }
+    }
+};
+
+async function processImageWithOpenAI(base64Image, mode) {
+    // Disable all capture buttons while processing
+    const cameraHandBtn = document.getElementById('camera-hand-btn');
+    const galleryHandBtn = document.getElementById('gallery-hand-btn');
+    const cameraTableBtn = document.getElementById('camera-table-btn');
+    const galleryTableBtn = document.getElementById('gallery-table-btn');
+
+    const buttons = mode === 'hand'
+        ? [cameraHandBtn, galleryHandBtn]
+        : [cameraTableBtn, galleryTableBtn];
+
+    const originalTexts = buttons.map(btn => btn.textContent);
+    buttons.forEach(btn => {
+        btn.disabled = true;
+        btn.textContent = '⏳ Processing...';
+    });
+
+    try {
+        const prompt = mode === 'hand' ? HAND_PROMPT : TABLE_PROMPT;
+        const tool = mode === 'hand' ? EXTRACT_HAND_TOOL : EXTRACT_TABLE_TOOL;
 
         const response = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
@@ -683,6 +766,11 @@ Example: {"melds": [{"type": "run", "tiles": ["r1", "r2", "r3"]}, {"type": "grou
                         ]
                     }
                 ],
+                tools: [tool],
+                tool_choice: {
+                    type: "function",
+                    function: { name: tool.function.name }
+                },
                 max_tokens: 1024,
                 temperature: 0.7
             })
@@ -702,21 +790,14 @@ Example: {"melds": [{"type": "run", "tiles": ["r1", "r2", "r3"]}, {"type": "grou
         }
 
         const data = await response.json();
-        const content = data.choices[0]?.message?.content;
+        const toolCall = data.choices[0]?.message?.tool_calls?.[0];
 
-        if (!content) {
-            showError('No response from OpenAI');
+        if (!toolCall || !toolCall.function.arguments) {
+            showError('No valid response from OpenAI');
             return;
         }
 
-        // Extract JSON from response
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) {
-            showError('Could not parse response from OpenAI');
-            return;
-        }
-
-        const result = JSON.parse(jsonMatch[0]);
+        const result = JSON.parse(toolCall.function.arguments);
 
         if (mode === 'hand') {
             updateHandFromImage(result);
@@ -728,8 +809,10 @@ Example: {"melds": [{"type": "run", "tiles": ["r1", "r2", "r3"]}, {"type": "grou
         console.error('Error processing image:', error);
         showError(`Error: ${error.message}`);
     } finally {
-        btn.disabled = false;
-        btn.textContent = originalText;
+        buttons.forEach((btn, index) => {
+            btn.disabled = false;
+            btn.textContent = originalTexts[index];
+        });
     }
 }
 
@@ -823,9 +906,12 @@ function attachEventListeners() {
     document.getElementById('save-api-key-btn').addEventListener('click', saveApiKey);
 
     // Image capture
-    document.getElementById('capture-hand-btn').addEventListener('click', () => captureImage('hand'));
-    document.getElementById('capture-table-btn').addEventListener('click', () => captureImage('table'));
-    document.getElementById('image-input').addEventListener('change', handleImageUpload);
+    document.getElementById('camera-hand-btn').addEventListener('click', () => captureImageFromCamera('hand'));
+    document.getElementById('gallery-hand-btn').addEventListener('click', () => captureImageFromGallery('hand'));
+    document.getElementById('camera-table-btn').addEventListener('click', () => captureImageFromCamera('table'));
+    document.getElementById('gallery-table-btn').addEventListener('click', () => captureImageFromGallery('table'));
+    document.getElementById('camera-input').addEventListener('change', handleImageUpload);
+    document.getElementById('gallery-input').addEventListener('change', handleImageUpload);
 
     // Close modal when clicking outside
     document.getElementById('settings-modal').addEventListener('click', (e) => {
@@ -860,7 +946,6 @@ function attachEventListeners() {
 window.removeTileFromHand = removeTileFromHand;
 window.removeMeldFromTable = removeMeldFromTable;
 window.deleteSavedState = deleteSavedState;
-window.captureImage = captureImage;
 
 // Initialize app
 initWasm().then(() => {

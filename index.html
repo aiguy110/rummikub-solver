@@ -63,7 +63,8 @@
                 </div>
                 <div class="hand-actions">
                     <button id="clear-hand-btn" class="btn btn-secondary">Clear Hand</button>
-                    <button id="capture-hand-btn" class="btn btn-secondary" style="display: none;">📷 Capture from Image</button>
+                    <button id="camera-hand-btn" class="btn btn-secondary" style="display: none;">📷 Camera</button>
+                    <button id="gallery-hand-btn" class="btn btn-secondary" style="display: none;">🖼️ Gallery</button>
                 </div>
             </div>
         </section>
@@ -81,7 +82,8 @@
                 </select>
                 <input type="text" id="meld-tiles" class="input" placeholder="Run: y 6 7 8 | Group: 5 r b k">
                 <button id="add-meld-btn" class="btn btn-secondary">Add Meld</button>
-                <button id="capture-table-btn" class="btn btn-secondary" style="display: none;">📷 Capture from Image</button>
+                <button id="camera-table-btn" class="btn btn-secondary" style="display: none;">📷 Camera</button>
+                <button id="gallery-table-btn" class="btn btn-secondary" style="display: none;">🖼️ Gallery</button>
             </div>
         </section>
 
@@ -135,8 +137,9 @@
         </div>
     </div>
 
-    <!-- Hidden file input for image capture -->
-    <input type="file" id="image-input" style="display: none;" accept="image/*" capture="environment">
+    <!-- Hidden file inputs for image capture -->
+    <input type="file" id="camera-input" style="display: none;" accept="image/*" capture="environment">
+    <input type="file" id="gallery-input" style="display: none;" accept="image/*">
 
     <script type="module" src="app.js"></script>
 </body>
