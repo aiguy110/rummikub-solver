@@ -3,6 +3,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use wasm_bindgen::prelude::*;
 
+/// Initialize panic hook for better error messages in the browser console
+#[wasm_bindgen(start)]
+pub fn init() {
+    console_error_panic_hook::set_once();
+}
+
 /// JSON-serializable representation of a meld
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -51,13 +57,14 @@ pub fn solve_rummikub(
     time_limit_ms: u64,
 ) -> String {
     match solve_internal(hand_tiles, table_melds, strategy, time_limit_ms) {
-        Ok(result) => serde_json::to_string(&result).unwrap(),
+        Ok(result) => serde_json::to_string(&result)
+            .unwrap_or_else(|e| format!(r#"{{"success":false,"error":"Serialization error: {}"}}"#, e)),
         Err(e) => serde_json::to_string(&SolverResult {
             success: false,
             moves: None,
             error: Some(e),
         })
-        .unwrap(),
+        .unwrap_or_else(|e| format!(r#"{{"success":false,"error":"Serialization error: {}"}}"#, e)),
     }
 }
 
