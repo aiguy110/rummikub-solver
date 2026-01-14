@@ -44,6 +44,15 @@ function createTilePicker() {
             element.appendChild(btn);
         }
     });
+
+    // Create wild button
+    const wildElement = document.getElementById('wild-tiles');
+    const wildBtn = document.createElement('button');
+    wildBtn.className = 'tile-btn wild-btn';
+    wildBtn.dataset.tile = 'w';
+    wildBtn.textContent = 'W';
+    wildBtn.addEventListener('click', () => addTileToHand('w'));
+    wildElement.appendChild(wildBtn);
 }
 
 // Add tile to hand
