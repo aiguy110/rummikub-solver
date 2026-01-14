@@ -2,7 +2,7 @@
 
 A Rust library and web interface for determining optimal moves in Rummikub.
 
-**[Try it live on GitHub Pages!](https://YOUR_USERNAME.github.io/rummikub-solver/)**
+**[Try it live on GitHub Pages!](https://aiguy110.github.io/rummikub-solver/)**
 
 ## Web Interface
 
