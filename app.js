@@ -7,6 +7,10 @@ let modelName = 'google/gemini-3-flash-preview'; // default model
 let currentImageMode = null; // 'hand' or 'table'
 let handPrompt = null; // current hand prompt
 let tablePrompt = null; // current table prompt
+let processingQueue = []; // track ongoing photo processing
+let nextProcessingId = 0; // unique ID for each processing request
+let confirmationQueue = []; // pending confirmations
+let nextConfirmationId = 0; // unique ID for confirmations
 
 // Initialize WASM
 async function initWasm() {
@@ -29,6 +33,138 @@ function initUI() {
     loadSavedStates();
     loadApiKey();
     attachEventListeners();
+}
+
+// Toast notification system
+function showToast(title, message, type = 'info', duration = 5000) {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+
+    const icons = {
+        success: '✅',
+        error: '❌',
+        info: 'ℹ️'
+    };
+
+    toast.innerHTML = `
+        <div class="toast-icon">${icons[type] || icons.info}</div>
+        <div class="toast-content">
+            <div class="toast-title">${title}</div>
+            ${message ? `<div class="toast-message">${message}</div>` : ''}
+        </div>
+        <button class="toast-close">×</button>
+    `;
+
+    const closeBtn = toast.querySelector('.toast-close');
+    closeBtn.addEventListener('click', () => {
+        toast.remove();
+    });
+
+    container.appendChild(toast);
+
+    if (duration > 0) {
+        setTimeout(() => {
+            toast.remove();
+        }, duration);
+    }
+}
+
+// Check if two melds are identical
+function meldsAreIdentical(meld1, meld2) {
+    if (meld1.type !== meld2.type) return false;
+    if (meld1.tiles.length !== meld2.tiles.length) return false;
+
+    // Compare tiles (order matters for runs, but we'll check both orders)
+    const tiles1 = meld1.tiles.join(',');
+    const tiles2 = meld2.tiles.join(',');
+
+    if (tiles1 === tiles2) return true;
+
+    // Check reverse order (in case meld was read backwards)
+    const tiles2Rev = meld2.tiles.slice().reverse().join(',');
+    return tiles1 === tiles2Rev;
+}
+
+// Find duplicate melds on the table
+function findDuplicateMeld(meld) {
+    for (let i = 0; i < table.length; i++) {
+        if (meldsAreIdentical(table[i], meld)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Add confirmation to queue
+function addConfirmation(meld, reason) {
+    const id = nextConfirmationId++;
+    confirmationQueue.push({ id, meld, reason });
+    updateConfirmationDisplay();
+}
+
+// Approve confirmation
+function approveConfirmation(id) {
+    const index = confirmationQueue.findIndex(c => c.id === id);
+    if (index === -1) return;
+
+    const confirmation = confirmationQueue[index];
+    table.push(confirmation.meld);
+    confirmationQueue.splice(index, 1);
+
+    updateTableDisplay();
+    updateConfirmationDisplay();
+    showToast('Meld Added', 'Meld has been added to the table', 'success', 3000);
+}
+
+// Reject confirmation
+function rejectConfirmation(id) {
+    const index = confirmationQueue.findIndex(c => c.id === id);
+    if (index === -1) return;
+
+    confirmationQueue.splice(index, 1);
+    updateConfirmationDisplay();
+    showToast('Meld Rejected', 'Duplicate meld was not added', 'info', 3000);
+}
+
+// Update confirmation queue display
+function updateConfirmationDisplay() {
+    const section = document.getElementById('confirmation-section');
+    const queue = document.getElementById('confirmation-queue');
+
+    if (confirmationQueue.length === 0) {
+        section.style.display = 'none';
+        return;
+    }
+
+    section.style.display = 'block';
+    queue.innerHTML = '';
+
+    confirmationQueue.forEach(confirmation => {
+        const item = document.createElement('div');
+        item.className = 'confirmation-item';
+
+        const meldTilesHtml = confirmation.meld.tiles
+            .map(tile => `<span class="meld-tile ${getTileColor(tile)}">${formatTileDisplay(tile)}</span>`)
+            .join('');
+
+        item.innerHTML = `
+            <div class="confirmation-header">
+                <div class="confirmation-title">Potential Duplicate Meld</div>
+            </div>
+            <div class="confirmation-reason">${confirmation.reason}</div>
+            <div class="confirmation-meld">
+                <span class="meld-type-badge">${confirmation.meld.type}</span>
+                <div class="meld-tiles">${meldTilesHtml}</div>
+            </div>
+            <div class="confirmation-actions">
+                <button class="btn btn-approve" onclick="approveConfirmation(${confirmation.id})">Add Anyway</button>
+                <button class="btn btn-reject" onclick="rejectConfirmation(${confirmation.id})">Skip</button>
+            </div>
+        `;
+
+        queue.appendChild(item);
+    });
 }
 
 // Create tile picker buttons
@@ -525,7 +661,7 @@ function saveState() {
     nameInput.value = '';
     loadSavedStates();
 
-    showSuccess('State saved successfully!');
+    showToast('State Saved', 'Game state saved successfully', 'success', 3000);
 }
 
 // Get saved states from localStorage
@@ -594,7 +730,7 @@ function loadState(index) {
     updateTileCounts();
     updateTableDisplay();
 
-    showSuccess('State loaded successfully!');
+    showToast('State Loaded', 'Game state loaded successfully', 'success', 3000);
 }
 
 // Delete a saved state
@@ -605,17 +741,9 @@ function deleteSavedState(index) {
     loadSavedStates();
 }
 
-// Show success message
+// Show success message (legacy - redirects to toast)
 function showSuccess(message) {
-    const section = document.getElementById('results-section');
-    const display = document.getElementById('results-display');
-
-    section.style.display = 'block';
-    display.innerHTML = `<div class="result-success">${message}</div>`;
-
-    setTimeout(() => {
-        section.style.display = 'none';
-    }, 3000);
+    showToast('Success', message, 'success', 3000);
 }
 
 // API Key Management
@@ -668,7 +796,7 @@ function saveApiKey() {
 
     document.getElementById('settings-modal').style.display = 'none';
     updateCaptureButtonVisibility();
-    showSuccess('Settings saved successfully!');
+    showToast('Settings Saved', 'Your settings have been saved successfully', 'success', 3000);
 }
 
 function restoreDefaultPrompts() {
@@ -678,7 +806,7 @@ function restoreDefaultPrompts() {
     handPromptInput.value = DEFAULT_HAND_PROMPT;
     tablePromptInput.value = DEFAULT_TABLE_PROMPT;
 
-    showSuccess('Default prompts restored! Click "Save Settings" to apply.');
+    showToast('Defaults Restored', 'Click "Save Settings" to apply the default prompts', 'info', 4000);
 }
 
 function updateCaptureButtonVisibility() {
@@ -749,11 +877,20 @@ async function handleImageUpload(event) {
         return;
     }
 
+    // Create processing ID and add to queue
+    const processingId = nextProcessingId++;
+    processingQueue.push(processingId);
+
+    const mode = currentImageMode;
+    const modeLabel = mode === 'hand' ? 'Hand' : 'Table';
+
+    showToast('Processing Started', `Analyzing ${modeLabel.toLowerCase()} image...`, 'info', 3000);
+
     // Convert image to base64
     const reader = new FileReader();
     reader.onload = async (e) => {
         const base64Image = e.target.result.split(',')[1];
-        await processImageWithOpenAI(base64Image, currentImageMode);
+        await processImageWithOpenAI(base64Image, mode, processingId, modeLabel);
     };
     reader.readAsDataURL(file);
 
@@ -844,23 +981,7 @@ const EXTRACT_TABLE_TOOL = {
     }
 };
 
-async function processImageWithOpenAI(base64Image, mode) {
-    // Disable all capture buttons while processing
-    const cameraHandBtn = document.getElementById('camera-hand-btn');
-    const galleryHandBtn = document.getElementById('gallery-hand-btn');
-    const cameraTableBtn = document.getElementById('camera-table-btn');
-    const galleryTableBtn = document.getElementById('gallery-table-btn');
-
-    const buttons = mode === 'hand'
-        ? [cameraHandBtn, galleryHandBtn]
-        : [cameraTableBtn, galleryTableBtn];
-
-    const originalTexts = buttons.map(btn => btn.textContent);
-    buttons.forEach(btn => {
-        btn.disabled = true;
-        btn.textContent = '⏳ Processing...';
-    });
-
+async function processImageWithOpenAI(base64Image, mode, processingId, modeLabel) {
     try {
         const prompt = mode === 'hand' ? handPrompt : tablePrompt;
         const tool = mode === 'hand' ? EXTRACT_HAND_TOOL : EXTRACT_TABLE_TOOL;
@@ -921,21 +1042,24 @@ async function processImageWithOpenAI(base64Image, mode) {
                 errorMessage += ' - Please check your API key in settings.';
             }
 
-            showError(errorMessage);
+            showToast(`${modeLabel} Processing Failed`, errorMessage, 'error', 8000);
+            removeFromProcessingQueue(processingId);
             return;
         }
 
         const data = await response.json();
 
         if (!data.choices || data.choices.length === 0) {
-            showError('Invalid API response: No choices returned');
+            showToast(`${modeLabel} Processing Failed`, 'Invalid API response: No choices returned', 'error', 8000);
+            removeFromProcessingQueue(processingId);
             return;
         }
 
         const toolCall = data.choices[0]?.message?.tool_calls?.[0];
 
         if (!toolCall || !toolCall.function?.arguments) {
-            showError('Invalid API response: No tool call or function arguments returned');
+            showToast(`${modeLabel} Processing Failed`, 'Invalid API response: No tool call or function arguments returned', 'error', 8000);
+            removeFromProcessingQueue(processingId);
             return;
         }
 
@@ -943,31 +1067,37 @@ async function processImageWithOpenAI(base64Image, mode) {
         try {
             result = JSON.parse(toolCall.function.arguments);
         } catch (e) {
-            showError(`Invalid API response: Failed to parse function arguments - ${e.message}`);
+            showToast(`${modeLabel} Processing Failed`, `Failed to parse function arguments - ${e.message}`, 'error', 8000);
+            removeFromProcessingQueue(processingId);
             return;
         }
 
         if (mode === 'hand') {
-            updateHandFromImage(result);
+            updateHandFromImage(result, processingId, modeLabel);
         } else {
-            updateTableFromImage(result);
+            updateTableFromImage(result, processingId, modeLabel);
         }
 
     } catch (error) {
         console.error('Error processing image:', error);
         const errorType = error.name === 'TypeError' ? 'Network error' : 'Error';
-        showError(`${errorType}: ${error.message || 'Unknown error occurred'}`);
-    } finally {
-        buttons.forEach((btn, index) => {
-            btn.disabled = false;
-            btn.textContent = originalTexts[index];
-        });
+        showToast(`${modeLabel} Processing Failed`, `${errorType}: ${error.message || 'Unknown error occurred'}`, 'error', 8000);
+        removeFromProcessingQueue(processingId);
     }
 }
 
-function updateHandFromImage(result) {
+// Remove processing ID from queue
+function removeFromProcessingQueue(processingId) {
+    const index = processingQueue.indexOf(processingId);
+    if (index !== -1) {
+        processingQueue.splice(index, 1);
+    }
+}
+
+function updateHandFromImage(result, processingId, modeLabel) {
     if (!result.tiles || !Array.isArray(result.tiles)) {
-        showError('Invalid response format from OpenAI');
+        showToast(`${modeLabel} Processing Failed`, 'Invalid response format from API', 'error', 8000);
+        removeFromProcessingQueue(processingId);
         return;
     }
 
@@ -985,22 +1115,28 @@ function updateHandFromImage(result) {
 
         updateHandDisplay();
         updateTileCounts();
-        showSuccess(`Imported ${result.tiles.length} tiles from image!`);
+        showToast('Hand Updated', `Imported ${result.tiles.length} tiles from image`, 'success', 5000);
+        removeFromProcessingQueue(processingId);
     } catch (error) {
-        showError(`Error updating hand: ${error.message}`);
+        showToast(`${modeLabel} Processing Failed`, `Error updating hand: ${error.message}`, 'error', 8000);
         hand.clear();
         updateHandDisplay();
+        removeFromProcessingQueue(processingId);
     }
 }
 
-function updateTableFromImage(result) {
+function updateTableFromImage(result, processingId, modeLabel) {
     if (!result.melds || !Array.isArray(result.melds)) {
-        showError('Invalid response format from OpenAI');
+        showToast(`${modeLabel} Processing Failed`, 'Invalid response format from API', 'error', 8000);
+        removeFromProcessingQueue(processingId);
         return;
     }
 
     try {
-        // Add new melds to existing table
+        let addedCount = 0;
+        let duplicateCount = 0;
+
+        // Process each meld
         for (const meld of result.melds) {
             if (!meld.type || !Array.isArray(meld.tiles)) {
                 throw new Error('Invalid meld format');
@@ -1017,17 +1153,44 @@ function updateTableFromImage(result) {
                 throw new Error(`Meld must have at least 3 tiles, got ${meld.tiles.length}`);
             }
 
-            table.push({
+            const meldObj = {
                 type: meld.type,
                 tiles: meld.tiles
-            });
+            };
+
+            // Check for duplicates
+            const duplicateIndex = findDuplicateMeld(meldObj);
+            if (duplicateIndex !== -1) {
+                // Add to confirmation queue
+                const tilesDisplay = meld.tiles.map(t => formatTileDisplay(t)).join(' ');
+                addConfirmation(
+                    meldObj,
+                    `This ${meld.type} (${tilesDisplay}) matches an existing meld on the table.`
+                );
+                duplicateCount++;
+            } else {
+                // Add directly to table
+                table.push(meldObj);
+                addedCount++;
+            }
         }
 
         updateTableDisplay();
-        showSuccess(`Added ${result.melds.length} melds to table!`);
+
+        // Show appropriate toast
+        if (addedCount > 0 && duplicateCount > 0) {
+            showToast('Table Updated', `Added ${addedCount} meld(s), ${duplicateCount} duplicate(s) need confirmation`, 'success', 5000);
+        } else if (addedCount > 0) {
+            showToast('Table Updated', `Added ${addedCount} meld(s) to table`, 'success', 5000);
+        } else if (duplicateCount > 0) {
+            showToast('Duplicates Detected', `${duplicateCount} duplicate meld(s) need confirmation`, 'info', 5000);
+        }
+
+        removeFromProcessingQueue(processingId);
     } catch (error) {
-        showError(`Error updating table: ${error.message}`);
+        showToast(`${modeLabel} Processing Failed`, `Error updating table: ${error.message}`, 'error', 8000);
         updateTableDisplay();
+        removeFromProcessingQueue(processingId);
     }
 }
 
@@ -1100,6 +1263,8 @@ function attachEventListeners() {
 window.removeTileFromHand = removeTileFromHand;
 window.removeMeldFromTable = removeMeldFromTable;
 window.deleteSavedState = deleteSavedState;
+window.approveConfirmation = approveConfirmation;
+window.rejectConfirmation = rejectConfirmation;
 
 // Initialize app
 initWasm().then(() => {

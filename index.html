@@ -107,6 +107,13 @@
             </div>
         </section>
 
+        <!-- Confirmation Queue Section -->
+        <section class="section" id="confirmation-section" style="display: none;">
+            <h2>Pending Confirmations</h2>
+            <p class="section-help">Review melds detected from photos that may be duplicates</p>
+            <div id="confirmation-queue" class="confirmation-queue"></div>
+        </section>
+
         <!-- Solver Controls -->
         <section class="section solver-controls">
             <h2>Solve</h2>
@@ -160,6 +167,9 @@
     <!-- Hidden file inputs for image capture -->
     <input type="file" id="camera-input" style="display: none;" accept="image/*" capture="environment">
     <input type="file" id="gallery-input" style="display: none;" accept="image/*">
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="toast-container"></div>
 
     <script type="module" src="app.js"></script>
 </body>
