@@ -71,6 +71,10 @@ pub fn solve_rummikub(
             success: false,
             moves: None,
             error: Some(e),
+            search_completed: false,
+            depth_reached: 0,
+            initial_quality: 0,
+            final_quality: 0,
         })
         .unwrap_or_else(|e| format!(r#"{{"success":false,"error":"Serialization error: {}"}}"#, e)),
     }
