@@ -5,6 +5,8 @@ let wasmModule = null;
 let apiKey = null;
 let modelName = 'google/gemini-3-flash-preview'; // default model
 let currentImageMode = null; // 'hand' or 'table'
+let handPrompt = null; // current hand prompt
+let tablePrompt = null; // current table prompt
 
 // Initialize WASM
 async function initWasm() {
@@ -620,14 +622,25 @@ function showSuccess(message) {
 function loadApiKey() {
     apiKey = localStorage.getItem('rummikub-api-key');
     modelName = localStorage.getItem('rummikub-model') || 'openai/gpt-4o';
+    loadPrompts();
     updateCaptureButtonVisibility();
+}
+
+function loadPrompts() {
+    handPrompt = localStorage.getItem('rummikub-hand-prompt') || DEFAULT_HAND_PROMPT;
+    tablePrompt = localStorage.getItem('rummikub-table-prompt') || DEFAULT_TABLE_PROMPT;
 }
 
 function saveApiKey() {
     const keyInput = document.getElementById('api-key-input');
     const modelInput = document.getElementById('model-input');
+    const handPromptInput = document.getElementById('hand-prompt-input');
+    const tablePromptInput = document.getElementById('table-prompt-input');
+
     const key = keyInput.value.trim();
     const model = modelInput.value.trim();
+    const handPromptValue = handPromptInput.value.trim();
+    const tablePromptValue = tablePromptInput.value.trim();
 
     if (!key) {
         showError('Please enter an API key');
@@ -641,13 +654,31 @@ function saveApiKey() {
 
     localStorage.setItem('rummikub-api-key', key);
     localStorage.setItem('rummikub-model', model);
+
+    // Save prompts (use defaults if empty)
+    localStorage.setItem('rummikub-hand-prompt', handPromptValue || DEFAULT_HAND_PROMPT);
+    localStorage.setItem('rummikub-table-prompt', tablePromptValue || DEFAULT_TABLE_PROMPT);
+
     apiKey = key;
     modelName = model;
+    handPrompt = handPromptValue || DEFAULT_HAND_PROMPT;
+    tablePrompt = tablePromptValue || DEFAULT_TABLE_PROMPT;
+
     keyInput.value = '';
 
     document.getElementById('settings-modal').style.display = 'none';
     updateCaptureButtonVisibility();
     showSuccess('Settings saved successfully!');
+}
+
+function restoreDefaultPrompts() {
+    const handPromptInput = document.getElementById('hand-prompt-input');
+    const tablePromptInput = document.getElementById('table-prompt-input');
+
+    handPromptInput.value = DEFAULT_HAND_PROMPT;
+    tablePromptInput.value = DEFAULT_TABLE_PROMPT;
+
+    showSuccess('Default prompts restored! Click "Save Settings" to apply.');
 }
 
 function updateCaptureButtonVisibility() {
@@ -680,12 +711,16 @@ function openSettingsModal() {
     const modal = document.getElementById('settings-modal');
     const keyInput = document.getElementById('api-key-input');
     const modelInput = document.getElementById('model-input');
+    const handPromptInput = document.getElementById('hand-prompt-input');
+    const tablePromptInput = document.getElementById('table-prompt-input');
 
     if (apiKey) {
         keyInput.value = apiKey;
     }
 
     modelInput.value = modelName;
+    handPromptInput.value = handPrompt || DEFAULT_HAND_PROMPT;
+    tablePromptInput.value = tablePrompt || DEFAULT_TABLE_PROMPT;
 
     modal.style.display = 'flex';
 }
@@ -726,8 +761,8 @@ async function handleImageUpload(event) {
     event.target.value = '';
 }
 
-// Prompts for image analysis
-const HAND_PROMPT = `Analyze this Rummikub hand image and extract all tiles visible. For each tile, identify:
+// Default prompts for image analysis
+const DEFAULT_HAND_PROMPT = `Analyze this Rummikub hand image and extract all tiles visible. For each tile, identify:
 - The color: red (r), blue (b), yellow (y), or black (k)
 - The number: 1-13
 - Any wild/joker tiles (w)
@@ -738,7 +773,7 @@ Only extract tiles that are part of the player's hand. Disregard any tiles that 
 
 Count carefully and report each physical tile you see exactly once.`;
 
-const TABLE_PROMPT = `Analyze this image showing Rummikub melds on a table. Extract all melds and identify:
+const DEFAULT_TABLE_PROMPT = `Analyze this image showing Rummikub melds on a table. Extract all melds and identify:
 - The meld type: either "run" (consecutive numbers, same color) or "group" (same number, different colors)
 - For each meld, list the tiles with color and number
 
@@ -827,7 +862,7 @@ async function processImageWithOpenAI(base64Image, mode) {
     });
 
     try {
-        const prompt = mode === 'hand' ? HAND_PROMPT : TABLE_PROMPT;
+        const prompt = mode === 'hand' ? handPrompt : tablePrompt;
         const tool = mode === 'hand' ? EXTRACT_HAND_TOOL : EXTRACT_TABLE_TOOL;
 
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -1015,6 +1050,7 @@ function attachEventListeners() {
     document.getElementById('settings-btn').addEventListener('click', openSettingsModal);
     document.getElementById('close-settings-btn').addEventListener('click', closeSettingsModal);
     document.getElementById('save-api-key-btn').addEventListener('click', saveApiKey);
+    document.getElementById('restore-defaults-btn').addEventListener('click', restoreDefaultPrompts);
 
     // Image capture
     document.getElementById('camera-hand-btn').addEventListener('click', () => captureImageFromCamera('hand'));
