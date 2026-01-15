@@ -965,9 +965,7 @@ function updateTableFromImage(result) {
     }
 
     try {
-        // Clear existing table and add new melds
-        table = [];
-
+        // Add new melds to existing table
         for (const meld of result.melds) {
             if (!meld.type || !Array.isArray(meld.tiles)) {
                 throw new Error('Invalid meld format');
@@ -991,10 +989,9 @@ function updateTableFromImage(result) {
         }
 
         updateTableDisplay();
-        showSuccess(`Imported ${result.melds.length} melds from image!`);
+        showSuccess(`Added ${result.melds.length} melds to table!`);
     } catch (error) {
         showError(`Error updating table: ${error.message}`);
-        table = [];
         updateTableDisplay();
     }
 }
