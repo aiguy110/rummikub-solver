@@ -402,6 +402,42 @@ header {
     color: var(--color-text);
 }
 
+/* Timer Widget */
+.solver-controls {
+    position: relative;
+    text-align: center;
+}
+
+.solver-controls .btn-primary {
+    display: inline-block;
+    width: auto;
+    min-width: 200px;
+}
+
+.timer-widget {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 12px;
+    vertical-align: middle;
+    animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: scale(0.8);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.timer-widget svg {
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
+}
+
 /* Results Display */
 .results-display {
     padding: 16px;

@@ -37,6 +37,14 @@ pub struct SolverResult {
     pub moves: Option<Vec<MoveJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Whether the search completed fully (true) or timed out (false)
+    pub search_completed: bool,
+    /// Maximum depth explored during the search
+    pub depth_reached: usize,
+    /// Initial hand quality before solving
+    pub initial_quality: i32,
+    /// Final hand quality after applying the solution
+    pub final_quality: i32,
 }
 
 /// Main WASM API: Solve a Rummikub game state
@@ -104,25 +112,27 @@ fn solve_internal(
     };
 
     // 5. Call solver with strategy
-    let moves =
+    let solver_result =
         solver::find_best_moves_with_strategy(&mut table, &mut hand, time_limit_ms, strategy);
 
     // 6. Convert result to JSON
-    match moves {
-        Some(moves) => {
-            let moves_json = moves.into_iter().map(move_to_json).collect();
-            Ok(SolverResult {
-                success: true,
-                moves: Some(moves_json),
-                error: None,
-            })
-        }
-        None => Ok(SolverResult {
-            success: false,
-            moves: None,
-            error: Some("No solution found within time limit".to_string()),
-        }),
-    }
+    let moves_json = solver_result.moves.as_ref().map(|moves| {
+        moves.iter().map(|m| move_to_json(m.clone())).collect()
+    });
+
+    Ok(SolverResult {
+        success: solver_result.moves.is_some(),
+        moves: moves_json,
+        error: if solver_result.moves.is_none() {
+            Some("No solution found within time limit".to_string())
+        } else {
+            None
+        },
+        search_completed: solver_result.search_completed,
+        depth_reached: solver_result.depth_reached,
+        initial_quality: solver_result.initial_quality,
+        final_quality: solver_result.final_quality,
+    })
 }
 
 /// Convert JSON meld to internal Meld type

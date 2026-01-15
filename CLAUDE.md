@@ -78,7 +78,7 @@ pub fn find_best_moves(
     table: &mut Table,
     hand: &mut Hand,
     max_ms: u64,
-) -> Option<Vec<SolverMove>>
+) -> SolverResult
 ```
 
 **Parameters:**
@@ -86,13 +86,20 @@ pub fn find_best_moves(
 - `hand`: The player's current tiles
 - `max_ms`: Time limit in milliseconds
 
+**Returns:** `SolverResult` struct containing:
+- `moves`: Optional sequence of moves (None if no solution found)
+- `search_completed`: Whether search completed fully (true) or timed out (false)
+- `depth_reached`: Maximum depth explored during search
+- `initial_quality`: Hand quality before solving (negative tile count or points)
+- `final_quality`: Hand quality after applying solution
+
 **Algorithm:**
 1. **BFS Exploration**: Explores all depths from 0 (direct play) to max_depth (up to 5)
 2. **Depth 0**: Play directly from hand with no table manipulation
 3. **Depth N**: Pick up N melds from table, add their tiles to hand, then call `find_best_melds`
 4. **Best Tracking**: Tracks the best solution found across all depths explored
 5. **Time Limit**: Continues until search tree exhausted or `max_ms` exceeded
-6. **Returns**: The best solution found (not just the first solution)
+6. **Metadata Tracking**: Records depth reached, completion status, and quality improvements
 
 **Quality Metric:** Negative of total tile count (fewer tiles remaining = better) or custom strategy
 
@@ -100,6 +107,24 @@ pub fn find_best_moves(
 - Both `table` and `hand` are **always restored** to original state after the function returns
 - Move sequences are valid: PickUp moves occur before LayDown moves
 - Direct play (depth=0) has no special treatment; it's just another depth level
+
+### UI Features
+
+**Timer Widget:**
+- Circular SVG timer appears next to "Find Best Moves" button during solving
+- Animates based on elapsed time vs configured time limit
+- Automatically removed when search completes or times out
+
+**Result Toast:**
+- Shows detailed completion info after solving:
+  - Completion reason (Search Complete / Timeout)
+  - Search depth reached
+  - Hand quality improvement (tiles or points saved)
+  - Time limit used
+
+**Settings:**
+- Time limit is now persistent across sessions (saved to localStorage)
+- Configurable between 100ms - 60000ms (60 seconds)
 
 ---
 

@@ -543,6 +543,78 @@ function updateTableDisplay() {
     });
 }
 
+// Circular Timer Widget Functions
+function createTimerWidget(timeLimitMs) {
+    const solveBtn = document.getElementById('solve-btn');
+    const btnContainer = solveBtn.parentElement;
+
+    // Create timer container
+    const timerContainer = document.createElement('div');
+    timerContainer.id = 'timer-widget';
+    timerContainer.className = 'timer-widget';
+
+    // Create SVG
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', '32');
+    svg.setAttribute('height', '32');
+    svg.setAttribute('viewBox', '0 0 32 32');
+
+    // Background circle
+    const bgCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    bgCircle.setAttribute('cx', '16');
+    bgCircle.setAttribute('cy', '16');
+    bgCircle.setAttribute('r', '14');
+    bgCircle.setAttribute('fill', 'none');
+    bgCircle.setAttribute('stroke', '#e0e0e0');
+    bgCircle.setAttribute('stroke-width', '3');
+
+    // Progress circle
+    const progressCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    progressCircle.setAttribute('cx', '16');
+    progressCircle.setAttribute('cy', '16');
+    progressCircle.setAttribute('r', '14');
+    progressCircle.setAttribute('fill', 'none');
+    progressCircle.setAttribute('stroke', '#27ae60');
+    progressCircle.setAttribute('stroke-width', '3');
+    progressCircle.setAttribute('stroke-linecap', 'round');
+    progressCircle.setAttribute('transform', 'rotate(-90 16 16)');
+
+    // Calculate circumference
+    const circumference = 2 * Math.PI * 14;
+    progressCircle.setAttribute('stroke-dasharray', circumference);
+    progressCircle.setAttribute('stroke-dashoffset', '0');
+    progressCircle.id = 'timer-progress-circle';
+
+    svg.appendChild(bgCircle);
+    svg.appendChild(progressCircle);
+    timerContainer.appendChild(svg);
+
+    // Insert timer after the button
+    btnContainer.appendChild(timerContainer);
+
+    return {
+        container: timerContainer,
+        progressCircle,
+        circumference,
+        startTime: Date.now(),
+        timeLimitMs
+    };
+}
+
+function updateTimerWidget(timerWidget) {
+    const elapsed = Date.now() - timerWidget.startTime;
+    const progress = Math.min(elapsed / timerWidget.timeLimitMs, 1);
+    const offset = timerWidget.circumference * progress;
+    timerWidget.progressCircle.setAttribute('stroke-dashoffset', offset);
+}
+
+function removeTimerWidget() {
+    const timerWidget = document.getElementById('timer-widget');
+    if (timerWidget) {
+        timerWidget.remove();
+    }
+}
+
 // Solve the game
 async function solve() {
     if (!wasmModule) {
@@ -567,6 +639,12 @@ async function solve() {
     solveBtn.textContent = 'Solving';
     solveBtn.classList.add('loading');
 
+    // Create and start timer widget
+    const timerWidget = createTimerWidget(timeLimit);
+    const timerInterval = setInterval(() => {
+        updateTimerWidget(timerWidget);
+    }, 50); // Update every 50ms for smooth animation
+
     try {
         // Convert hand to array format
         const handArray = [];
@@ -586,16 +664,55 @@ async function solve() {
 
         const result = JSON.parse(resultJson);
 
+        // Show detailed toast with results
+        showSolverResultToast(result, timeLimit);
+
         displayResults(result);
 
     } catch (error) {
         console.error('Solver error:', error);
         showError('Solver error: ' + error.message);
     } finally {
+        // Stop timer animation and remove widget
+        clearInterval(timerInterval);
+        removeTimerWidget();
+
         solveBtn.disabled = false;
         solveBtn.textContent = 'Find Best Moves';
         solveBtn.classList.remove('loading');
     }
+}
+
+function showSolverResultToast(result, timeLimit) {
+    const completionReason = result.search_completed ? 'Search Complete' : 'Timeout';
+
+    let title, message, type;
+
+    if (result.success) {
+        title = 'Solution Found!';
+        const improvement = result.initial_quality - result.final_quality;
+        const improvementText = improvement > 0
+            ? `Improved by ${improvement} ${result.initial_quality < 0 ? 'tiles' : 'points'}`
+            : 'No improvement';
+
+        message = `
+            <strong>${completionReason}</strong><br>
+            Depth: ${result.depth_reached}<br>
+            ${improvementText}<br>
+            Time: ${timeLimit}ms
+        `;
+        type = 'success';
+    } else {
+        title = 'No Solution Found';
+        message = `
+            <strong>${completionReason}</strong><br>
+            Depth reached: ${result.depth_reached}<br>
+            Time: ${timeLimit}ms
+        `;
+        type = 'info';
+    }
+
+    showToast(title, message, type, 5000);
 }
 
 // Render tiles as HTML with consistent styling
@@ -792,7 +909,20 @@ function loadApiKey() {
     apiKey = localStorage.getItem('rummikub-api-key');
     modelName = localStorage.getItem('rummikub-model') || 'openai/gpt-4o';
     loadPrompts();
+    loadTimeLimit();
     updateCaptureButtonVisibility();
+}
+
+function loadTimeLimit() {
+    const savedTimeLimit = localStorage.getItem('rummikub-time-limit');
+    if (savedTimeLimit) {
+        document.getElementById('time-limit').value = savedTimeLimit;
+    }
+}
+
+function saveTimeLimit() {
+    const timeLimit = document.getElementById('time-limit').value;
+    localStorage.setItem('rummikub-time-limit', timeLimit);
 }
 
 function loadPrompts() {
@@ -1298,6 +1428,9 @@ function attachEventListeners() {
             saveApiKey();
         }
     });
+
+    // Save time limit when changed
+    document.getElementById('time-limit').addEventListener('change', saveTimeLimit);
 }
 
 // Make functions global for onclick handlers

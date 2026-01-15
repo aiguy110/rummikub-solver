@@ -59,6 +59,21 @@ pub enum ScoringStrategy {
     MinimizePoints,
 }
 
+/// Detailed result from the solver including metadata about the search
+#[derive(Debug, Clone)]
+pub struct SolverResult {
+    /// The sequence of moves to execute, or None if no solution found
+    pub moves: Option<Vec<SolverMove>>,
+    /// Whether the search completed fully (true) or timed out (false)
+    pub search_completed: bool,
+    /// Maximum depth explored during the search
+    pub depth_reached: usize,
+    /// Initial hand quality before solving
+    pub initial_quality: i32,
+    /// Final hand quality after applying the solution
+    pub final_quality: i32,
+}
+
 impl ScoringStrategy {
     fn evaluate(&self, hand: &Hand) -> i32 {
         match self {
@@ -93,7 +108,7 @@ pub fn find_best_moves(
     table: &mut Table,
     hand: &mut Hand,
     max_ms: u64,
-) -> Option<Vec<SolverMove>> {
+) -> SolverResult {
     find_best_moves_with_strategy(table, hand, max_ms, ScoringStrategy::MinimizeTiles)
 }
 
@@ -110,7 +125,7 @@ pub fn find_best_moves_with_strategy(
     hand: &mut Hand,
     max_ms: u64,
     strategy: ScoringStrategy,
-) -> Option<Vec<SolverMove>> {
+) -> SolverResult {
     let quality = |h: &Hand| strategy.evaluate(h);
     find_best_moves_internal(table, hand, max_ms, quality)
 }
@@ -121,7 +136,7 @@ fn find_best_moves_internal<F>(
     hand: &mut Hand,
     max_ms: u64,
     quality: F,
-) -> Option<Vec<SolverMove>>
+) -> SolverResult
 where
     F: Fn(&Hand) -> i32 + Copy,
 {
@@ -129,7 +144,11 @@ where
     let original_hand = hand.clone();
     let original_table = table.clone();
 
+    // Calculate initial quality
+    let initial_quality = quality(&original_hand);
+
     let mut best_solution: Option<(Vec<SolverMove>, i32)> = None;
+    let mut depth_reached = 0;
 
     // BFS: Try depth 0 (direct play), then 1, 2, 3, etc.
     let max_depth = table.len().min(5); // Limit depth to avoid explosion
@@ -139,6 +158,8 @@ where
         if timer.is_expired() {
             break;
         }
+
+        depth_reached = depth;
 
         // Try all combinations of removing 'depth' melds from the table
         try_all_combinations_at_depth(
@@ -152,12 +173,42 @@ where
         );
     }
 
+    // Determine if search completed
+    let search_completed = !timer.is_expired() && depth_reached == max_depth;
+
+    // Calculate final quality
+    let final_quality = if let Some((ref moves, _)) = best_solution {
+        // Simulate applying the moves to calculate final hand quality
+        let mut temp_hand = original_hand.clone();
+        for mov in moves {
+            match mov {
+                SolverMove::PickUp(_) => {
+                    // PickUp doesn't affect hand directly in our calculation
+                }
+                SolverMove::LayDown(meld) => {
+                    for tile in &meld.tiles {
+                        temp_hand.remove(tile);
+                    }
+                }
+            }
+        }
+        quality(&temp_hand)
+    } else {
+        initial_quality
+    };
+
     // Restore state
     *hand = original_hand;
     *table = original_table;
 
-    // Return the best solution found (if any)
-    best_solution.map(|(moves, _score)| moves)
+    // Return the result with metadata
+    SolverResult {
+        moves: best_solution.map(|(moves, _score)| moves),
+        search_completed,
+        depth_reached,
+        initial_quality,
+        final_quality,
+    }
 }
 
 /// Try all combinations of removing 'count' melds from the table and update best solution
@@ -1080,8 +1131,8 @@ mod tests {
         let result = find_best_moves(&mut table, &mut hand, 1000);
 
         // Should find a solution (direct play)
-        assert!(result.is_some());
-        let moves = result.unwrap();
+        assert!(result.moves.is_some());
+        let moves = result.moves.unwrap();
         assert!(!moves.is_empty());
 
         // All moves should be LayDown
@@ -1109,8 +1160,8 @@ mod tests {
         // Cannot play directly, but can pick up the meld and play [1,2,3,4]
         let result = find_best_moves(&mut table, &mut hand, 1000);
 
-        assert!(result.is_some());
-        let moves = result.unwrap();
+        assert!(result.moves.is_some());
+        let moves = result.moves.unwrap();
         assert!(!moves.is_empty());
 
         // Should have at least one PickUp move
@@ -1150,7 +1201,7 @@ mod tests {
         let result = find_best_moves(&mut table, &mut hand, 1000);
 
         // Cannot form a valid meld with just 2 unrelated tiles
-        assert!(result.is_none());
+        assert!(result.moves.is_none());
     }
 
     #[test]
@@ -1190,8 +1241,8 @@ mod tests {
         let result = find_best_moves(&mut table, &mut hand, 1000);
 
         // Should succeed with direct play
-        assert!(result.is_some());
-        let moves = result.unwrap();
+        assert!(result.moves.is_some());
+        let moves = result.moves.unwrap();
 
         // Should only have LayDown moves
         assert!(moves.iter().all(|m| matches!(m, SolverMove::LayDown(_))));
@@ -1217,8 +1268,8 @@ mod tests {
         let result = find_best_moves(&mut table, &mut hand, 2000);
 
         // Should pick up the meld and form a longer run
-        assert!(result.is_some());
-        let moves = result.unwrap();
+        assert!(result.moves.is_some());
+        let moves = result.moves.unwrap();
 
         // Should have at least one PickUp move
         let pickup_count = moves.iter().filter(|m| matches!(m, SolverMove::PickUp(_))).count();
@@ -1240,8 +1291,8 @@ mod tests {
         let result = find_best_moves(&mut table, &mut hand, 1000);
 
         // Should form run with wildcard as Red 2
-        assert!(result.is_some());
-        let moves = result.unwrap();
+        assert!(result.moves.is_some());
+        let moves = result.moves.unwrap();
         assert!(!moves.is_empty());
     }
 
@@ -1297,8 +1348,8 @@ mod tests {
         let mut hand = original_hand.clone();
         let result = find_best_moves(&mut table, &mut hand, 5000);
 
-        assert!(result.is_some(), "find_best_moves should find a solution");
-        let moves = result.unwrap();
+        assert!(result.moves.is_some(), "find_best_moves should find a solution");
+        let moves = result.moves.unwrap();
 
         // Calculate remaining tiles from the moves
         let mut test_hand = original_hand.clone();
@@ -1349,7 +1400,7 @@ mod tests {
         let result = find_best_moves(&mut table, &mut hand, 5000);
 
         // Should find a solution by picking up the table meld
-        assert!(result.is_some(), "Should find a solution at depth > 0");
+        assert!(result.moves.is_some(), "Should find a solution at depth > 0");
 
         // Verify state is preserved
         assert_eq!(table, original_table);
