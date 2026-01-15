@@ -239,6 +239,29 @@ function updateTileCounts() {
     });
 }
 
+// Sort tiles by color (red, blue, yellow, black, wild) then by number
+function sortTiles(tileA, tileB) {
+    // Define color order matching tile picker: red, blue, yellow, black, wild
+    const colorOrder = { 'r': 0, 'b': 1, 'y': 2, 'k': 3, 'w': 4 };
+
+    const colorA = tileA[0];
+    const colorB = tileB[0];
+
+    // First compare by color
+    const colorCompare = colorOrder[colorA] - colorOrder[colorB];
+    if (colorCompare !== 0) {
+        return colorCompare;
+    }
+
+    // If same color, compare by number
+    // Wild tiles don't have numbers, so they're already sorted by color
+    if (colorA === 'w') return 0;
+
+    const numA = parseInt(tileA.substring(1));
+    const numB = parseInt(tileB.substring(1));
+    return numA - numB;
+}
+
 // Update hand display
 function updateHandDisplay() {
     const display = document.getElementById('hand-display');
@@ -259,7 +282,7 @@ function updateHandDisplay() {
 
     // Sort tiles by color and number
     const sortedTiles = Array.from(hand.entries()).sort((a, b) => {
-        return a[0].localeCompare(b[0]);
+        return sortTiles(a[0], b[0]);
     });
 
     sortedTiles.forEach(([tile, count]) => {
@@ -575,6 +598,15 @@ async function solve() {
     }
 }
 
+// Render tiles as HTML with consistent styling
+function renderTilesAsHtml(tiles) {
+    return tiles.map(tile => {
+        const color = getTileColor(tile);
+        const display = formatTileDisplay(tile);
+        return `<span class="meld-tile ${color}">${display}</span>`;
+    }).join('');
+}
+
 // Display solver results
 function displayResults(result) {
     const section = document.getElementById('results-section');
@@ -614,11 +646,20 @@ function displayResults(result) {
         html += `<span class="move-number">${index + 1}.</span>`;
 
         if (move.action === 'pickup') {
-            html += `Pick up meld #${move.index + 1} from the table`;
+            // Get the meld from the table and show its tiles
+            const meldIndex = move.index;
+            if (meldIndex >= 0 && meldIndex < table.length) {
+                const meld = table[meldIndex];
+                const tilesHtml = renderTilesAsHtml(meld.tiles);
+                html += `Pick up <span class="meld-type-badge">${meld.type}</span> <span class="meld-tiles">${tilesHtml}</span>`;
+            } else {
+                // Fallback if meld index is invalid
+                html += `Pick up meld #${meldIndex + 1} from the table`;
+            }
         } else if (move.action === 'laydown') {
             const meld = move.meld;
-            const tiles = meld.tiles.map(t => formatTileDisplay(t)).join(' ');
-            html += `Lay down ${meld.type}: ${tiles}`;
+            const tilesHtml = renderTilesAsHtml(meld.tiles);
+            html += `Lay down <span class="meld-type-badge">${meld.type}</span> <span class="meld-tiles">${tilesHtml}</span>`;
         }
 
         html += `</li>`;
