@@ -133,6 +133,29 @@ pub fn find_best_moves(
 - Time limit is now persistent across sessions (saved to localStorage)
 - Configurable between 100ms - 60000ms (60 seconds)
 
+**Footer:**
+- Displays two commit hashes:
+  - Web commit: The git commit of the web app files (index.html, app.js, etc.)
+  - WASM module: The git commit from when the WASM module was built
+- The WASM module commit is captured at compile time via `build.rs` and exposed through the `get_build_commit()` function
+- This helps identify when browser is caching an old WASM module vs new web app code
+
+---
+
+## Build System
+
+**Compile-Time Git Commit Capture:**
+- `build.rs` runs during compilation and captures the current git commit hash (first 8 chars)
+- Sets the `BUILD_COMMIT` environment variable available to the Rust code via `env!("BUILD_COMMIT")`
+- The `get_build_commit()` function in `src/wasm_api.rs` exposes this to JavaScript as a WASM export
+- This allows the web app footer to display which commit the WASM module was built from
+
+**WASM Building:**
+- WASM module is built using `wasm-pack build --target web --release`
+- **Cannot run in Termux** due to missing wasm32-unknown-unknown target
+- **Works fine in CI** (GitHub Actions) where all changes are tested and deployed
+- Local development focuses on Rust logic; WASM testing happens in CI/production
+
 ---
 
 ## Termux Environment Notes

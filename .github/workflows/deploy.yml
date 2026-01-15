@@ -38,6 +38,7 @@ jobs:
           cp index.html dist/
           cp styles.css dist/
           cp app.js dist/
+          cp solver-worker.js dist/
           cp -r pkg dist/
           touch dist/.nojekyll
 
