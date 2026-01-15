@@ -544,7 +544,8 @@ header {
     color: var(--color-text);
 }
 
-.settings-group input {
+.settings-group input,
+.settings-group textarea {
     width: 100%;
     margin-bottom: 8px;
 }
