@@ -12,6 +12,12 @@ let nextProcessingId = 0; // unique ID for each processing request
 let confirmationQueue = []; // pending confirmations
 let nextConfirmationId = 0; // unique ID for confirmations
 
+// Web Worker for solving
+let solverWorker = null;
+let solverWorkerReady = false;
+let currentTimerWidget = null;
+let currentTimerInterval = null;
+
 // Initialize WASM
 async function initWasm() {
     try {
@@ -19,10 +25,96 @@ async function initWasm() {
         await wasm.default();
         wasmModule = wasm;
         console.log('WASM module loaded successfully');
+
+        // Update footer with WASM module build commit
+        try {
+            const buildCommit = wasm.get_build_commit();
+            const wasmCommitElement = document.getElementById('wasm-commit');
+            if (wasmCommitElement) {
+                wasmCommitElement.textContent = buildCommit;
+            }
+        } catch (error) {
+            console.error('Failed to get WASM build commit:', error);
+            const wasmCommitElement = document.getElementById('wasm-commit');
+            if (wasmCommitElement) {
+                wasmCommitElement.textContent = 'unknown';
+            }
+        }
     } catch (error) {
         console.error('Failed to load WASM:', error);
         showError('Failed to load solver module. Make sure WASM files are built.');
     }
+}
+
+// Initialize Web Worker
+function initWorker() {
+    try {
+        solverWorker = new Worker('./solver-worker.js', { type: 'module' });
+
+        solverWorker.onmessage = function(e) {
+            const { type, result, error } = e.data;
+
+            if (type === 'ready') {
+                solverWorkerReady = true;
+                console.log('Solver worker ready');
+            } else if (type === 'result') {
+                handleSolverResult(result);
+            } else if (type === 'error') {
+                handleSolverError(error);
+            }
+        };
+
+        solverWorker.onerror = function(error) {
+            console.error('Worker error:', error);
+            solverWorkerReady = false;
+            showError('Solver worker error: ' + error.message);
+        };
+    } catch (error) {
+        console.error('Failed to create worker:', error);
+        showError('Failed to create solver worker. Falling back to main thread.');
+        solverWorker = null;
+    }
+}
+
+// Handle solver result from worker
+function handleSolverResult(result) {
+    const timeLimit = parseInt(document.getElementById('time-limit').value);
+
+    // Stop timer animation and remove widget
+    if (currentTimerInterval) {
+        clearInterval(currentTimerInterval);
+        currentTimerInterval = null;
+    }
+    removeTimerWidget();
+
+    // Re-enable solve button
+    const solveBtn = document.getElementById('solve-btn');
+    solveBtn.disabled = false;
+    solveBtn.textContent = 'Find Best Moves';
+    solveBtn.classList.remove('loading');
+
+    // Show results
+    showSolverResultToast(result, timeLimit);
+    displayResults(result);
+}
+
+// Handle solver error from worker
+function handleSolverError(error) {
+    // Stop timer animation and remove widget
+    if (currentTimerInterval) {
+        clearInterval(currentTimerInterval);
+        currentTimerInterval = null;
+    }
+    removeTimerWidget();
+
+    // Re-enable solve button
+    const solveBtn = document.getElementById('solve-btn');
+    solveBtn.disabled = false;
+    solveBtn.textContent = 'Find Best Moves';
+    solveBtn.classList.remove('loading');
+
+    console.error('Solver error:', error);
+    showError(error);
 }
 
 // Initialize UI
@@ -617,17 +709,18 @@ function removeTimerWidget() {
 
 // Solve the game
 async function solve() {
-    if (!wasmModule) {
-        showError('WASM module not loaded yet');
-        return;
-    }
-
     // Get total tiles in hand
     let totalTiles = 0;
     hand.forEach(count => totalTiles += count);
 
     if (totalTiles === 0) {
         showError('Please add tiles to your hand');
+        return;
+    }
+
+    // Check if worker is available and ready
+    if (!solverWorker || !solverWorkerReady) {
+        showError('Solver not ready yet. Please wait a moment and try again.');
         return;
     }
 
@@ -640,47 +733,29 @@ async function solve() {
     solveBtn.classList.add('loading');
 
     // Create and start timer widget
-    const timerWidget = createTimerWidget(timeLimit);
-    const timerInterval = setInterval(() => {
-        updateTimerWidget(timerWidget);
+    currentTimerWidget = createTimerWidget(timeLimit);
+    currentTimerInterval = setInterval(() => {
+        updateTimerWidget(currentTimerWidget);
     }, 50); // Update every 50ms for smooth animation
 
-    try {
-        // Convert hand to array format
-        const handArray = [];
-        hand.forEach((count, tile) => {
-            for (let i = 0; i < count; i++) {
-                handArray.push(tile);
-            }
-        });
+    // Convert hand to array format
+    const handArray = [];
+    hand.forEach((count, tile) => {
+        for (let i = 0; i < count; i++) {
+            handArray.push(tile);
+        }
+    });
 
-        // Call WASM solver
-        const resultJson = wasmModule.solve_rummikub(
-            JSON.stringify(handArray),
-            JSON.stringify(table),
+    // Send solve request to worker
+    solverWorker.postMessage({
+        type: 'solve',
+        data: {
+            handArray,
+            table,
             strategy,
-            BigInt(timeLimit)
-        );
-
-        const result = JSON.parse(resultJson);
-
-        // Show detailed toast with results
-        showSolverResultToast(result, timeLimit);
-
-        displayResults(result);
-
-    } catch (error) {
-        console.error('Solver error:', error);
-        showError('Solver error: ' + error.message);
-    } finally {
-        // Stop timer animation and remove widget
-        clearInterval(timerInterval);
-        removeTimerWidget();
-
-        solveBtn.disabled = false;
-        solveBtn.textContent = 'Find Best Moves';
-        solveBtn.classList.remove('loading');
-    }
+            timeLimit
+        }
+    });
 }
 
 function showSolverResultToast(result, timeLimit) {
@@ -1443,4 +1518,5 @@ window.rejectConfirmation = rejectConfirmation;
 // Initialize app
 initWasm().then(() => {
     initUI();
+    initWorker(); // Initialize Web Worker for non-blocking solver
 });

@@ -110,9 +110,16 @@ pub fn find_best_moves(
 
 ### UI Features
 
+**Web Worker Architecture:**
+- Solver runs in a background Web Worker thread (solver-worker.js)
+- Prevents blocking the main UI thread during computation
+- Allows timer widget to animate smoothly while solving
+- Worker loads WASM module independently and handles solve requests
+
 **Timer Widget:**
 - Circular SVG timer appears next to "Find Best Moves" button during solving
-- Animates based on elapsed time vs configured time limit
+- Animates smoothly every 50ms based on elapsed time vs configured time limit
+- Runs on main thread while solver executes in Web Worker
 - Automatically removed when search completes or times out
 
 **Result Toast:**

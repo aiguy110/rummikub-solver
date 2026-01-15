@@ -173,3 +173,11 @@ fn move_to_json(solver_move: solver::SolverMove) -> MoveJson {
         },
     }
 }
+
+/// Get the git commit hash that this WASM module was built from
+///
+/// Returns the first 8 characters of the commit hash, or "unknown" if not available
+#[wasm_bindgen]
+pub fn get_build_commit() -> String {
+    env!("BUILD_COMMIT").to_string()
+}
