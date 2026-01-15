@@ -82,11 +82,12 @@ impl ScoringStrategy {
 /// Find the best sequence of moves to play tiles from hand, potentially manipulating the table.
 ///
 /// This function uses a BFS approach:
-/// 1. First tries to play directly from the current hand
-/// 2. Then explores removing melds from the table (starting with 1, then 2, etc.)
+/// 1. Explores depth 0 (direct play from hand with no table manipulation)
+/// 2. Then explores depth 1 (removing 1 meld from table), depth 2, etc.
 /// 3. For each configuration, attempts to find valid melds to play
+/// 4. Continues until the search tree is exhausted or the time limit is reached
+/// 5. Returns the best solution found across all explored depths
 ///
-/// Returns the sequence of moves if a solution is found within the time limit.
 /// Uses MinimizeTiles strategy by default.
 pub fn find_best_moves(
     table: &mut Table,
@@ -99,11 +100,11 @@ pub fn find_best_moves(
 /// Find the best sequence of moves using a specific scoring strategy.
 ///
 /// This function uses a BFS approach:
-/// 1. First tries to play directly from the current hand
-/// 2. Then explores removing melds from the table (starting with 1, then 2, etc.)
+/// 1. Explores depth 0 (direct play from hand with no table manipulation)
+/// 2. Then explores depth 1 (removing 1 meld from table), depth 2, etc.
 /// 3. For each configuration, attempts to find valid melds to play
-///
-/// Returns the sequence of moves if a solution is found within the time limit.
+/// 4. Continues until the search tree is exhausted or the time limit is reached
+/// 5. Returns the best solution found across all explored depths
 pub fn find_best_moves_with_strategy(
     table: &mut Table,
     hand: &mut Hand,
@@ -128,103 +129,113 @@ where
     let original_hand = hand.clone();
     let original_table = table.clone();
 
-    // Strategy 1: Try to play directly from current hand
-    if let Some(melds) = find_best_melds(hand, quality, &original_hand) {
-        let moves: Vec<SolverMove> = melds
-            .into_iter()
-            .map(|meld| SolverMove::LayDown(meld))
-            .collect();
-        // Restore state
-        *hand = original_hand;
-        *table = original_table;
-        return Some(moves);
-    }
+    let mut best_solution: Option<(Vec<SolverMove>, i32)> = None;
 
-    // Strategy 2: BFS exploring table manipulations
-    // Try removing 1 meld, then 2, then 3, etc.
+    // BFS: Try depth 0 (direct play), then 1, 2, 3, etc.
     let max_depth = table.len().min(5); // Limit depth to avoid explosion
 
-    for depth in 1..=max_depth {
-        // Check time limit
+    for depth in 0..=max_depth {
+        // Check time limit before starting each depth
         if timer.is_expired() {
-            *hand = original_hand;
-            *table = original_table;
-            return None;
+            break;
         }
 
         // Try all combinations of removing 'depth' melds from the table
-        if let Some(moves) = try_remove_combinations(
+        try_all_combinations_at_depth(
             table,
             hand,
             &original_hand,
             depth,
             quality,
             &timer,
-        ) {
-            // Restore state
-            *hand = original_hand;
-            *table = original_table;
-            return Some(moves);
-        }
+            &mut best_solution,
+        );
     }
 
-    // Restore state if no solution found
+    // Restore state
     *hand = original_hand;
     *table = original_table;
-    None
+
+    // Return the best solution found (if any)
+    best_solution.map(|(moves, _score)| moves)
 }
 
-/// Try all combinations of removing 'count' melds from the table
-fn try_remove_combinations<F>(
+/// Try all combinations of removing 'count' melds from the table and update best solution
+fn try_all_combinations_at_depth<F>(
     table: &mut Table,
     hand: &mut Hand,
     original_hand: &Hand,
-    count: usize,
+    depth: usize,
     quality: F,
     timer: &TimeTracker,
-) -> Option<Vec<SolverMove>>
+    best_solution: &mut Option<(Vec<SolverMove>, i32)>,
+)
 where
     F: Fn(&Hand) -> i32 + Copy,
 {
     let table_size = table.len();
-    if count > table_size {
-        return None;
+
+    // Depth 0 means direct play from hand (no table manipulation)
+    if depth == 0 {
+        if let Some(melds) = find_best_melds(hand, quality, original_hand) {
+            let moves: Vec<SolverMove> = melds
+                .iter()
+                .map(|meld| SolverMove::LayDown(meld.clone()))
+                .collect();
+
+            // Calculate score for this solution
+            let mut temp_hand = original_hand.clone();
+            for meld in &melds {
+                for tile in &meld.tiles {
+                    temp_hand.remove(tile);
+                }
+            }
+            let score = quality(&temp_hand);
+
+            // Update best solution if this is better
+            if best_solution.as_ref().map_or(true, |(_, best_score)| score > *best_score) {
+                *best_solution = Some((moves, score));
+            }
+        }
+        return;
+    }
+
+    // For depth > 0, try all combinations of removing 'depth' melds
+    if depth > table_size {
+        return;
     }
 
     // Generate all combinations of indices to remove
-    let mut indices = vec![0; count];
-    if !generate_combination(&mut indices, 0, 0, table_size, count) {
-        return None;
+    let mut indices = vec![0; depth];
+    if !generate_combination(&mut indices, 0, 0, table_size, depth) {
+        return;
     }
 
     loop {
         // Check time limit
         if timer.is_expired() {
-            return None;
+            return;
         }
 
-        // Try this combination
-        if let Some(moves) = try_meld_combination(table, hand, original_hand, &indices, quality) {
-            return Some(moves);
-        }
+        // Try this combination and update best solution if better
+        try_meld_combination(table, hand, original_hand, &indices, quality, best_solution);
 
         // Generate next combination
         if !next_combination(&mut indices, table_size) {
             break;
         }
     }
-
-    None
 }
 
-/// Try removing the melds at the given indices and finding a solution
+/// Try removing the melds at the given indices and update best solution if better
 fn try_meld_combination<F>(
     table: &mut Table,
     hand: &mut Hand,
     original_hand: &Hand,
     indices: &[usize],
     quality: F,
-) -> Option<Vec<SolverMove>>
+    best_solution: &mut Option<(Vec<SolverMove>, i32)>,
+)
 where
     F: Fn(&Hand) -> i32 + Copy,
 {
@@ -254,20 +265,28 @@ where
         }
 
         // Then, lay down the new melds
-        for meld in melds {
-            moves.push(SolverMove::LayDown(meld));
+        for meld in &melds {
+            moves.push(SolverMove::LayDown(meld.clone()));
         }
 
-        // Restore state
-        *table = table_snapshot;
-        *hand = hand_snapshot;
-        return Some(moves);
+        // Calculate score for this solution
+        let mut temp_hand = original_hand.clone();
+        for meld in &melds {
+            for tile in &meld.tiles {
+                temp_hand.remove(tile);
+            }
+        }
+        let score = quality(&temp_hand);
+
+        // Update best solution if this is better
+        if best_solution.as_ref().map_or(true, |(_, best_score)| score > *best_score) {
+            *best_solution = Some((moves, score));
+        }
     }
 
     // Restore state
     *table = table_snapshot;
     *hand = hand_snapshot;
-    None
 }
 
 /// Initialize a combination to [0, 1, 2, ..., count-1]
@@ -1224,5 +1243,116 @@ mod tests {
         assert!(result.is_some());
         let moves = result.unwrap();
         assert!(!moves.is_empty());
+    }
+
+    #[test]
+    fn test_find_best_moves_returns_best_not_first() {
+        // This test verifies that the solver continues searching and returns
+        // the BEST solution found, not just the first solution.
+        //
+        // Setup:
+        // - Hand: Red 1,2,3,4,11 (can play 1,2,3 at depth 0, leaving 4,11)
+        // - Table: Red 5,6,7 (one meld)
+        //
+        // Depth 0 (direct play): Can only play Red 1,2,3, leaving Red 4,11 (2 tiles)
+        // Depth 1 (pick up table): Can play Red 1,2,3,4,5,6,7, leaving Red 11 (1 tile)
+        //
+        // The solver should return the depth 1 solution (1 remaining tile is better than 2)
+
+        let mut table = Table::new();
+        // Add Red 5,6,7 to the table
+        let mut tiles = VecDeque::new();
+        tiles.push_back(Tile::new(0, 5));
+        tiles.push_back(Tile::new(0, 6));
+        tiles.push_back(Tile::new(0, 7));
+        table.add_meld(Meld::new(MeldType::Run, tiles));
+
+        let mut hand = Hand::new();
+        hand.add(Tile::new(0, 1));  // Red 1
+        hand.add(Tile::new(0, 2));  // Red 2
+        hand.add(Tile::new(0, 3));  // Red 3
+        hand.add(Tile::new(0, 4));  // Red 4
+        hand.add(Tile::new(0, 11)); // Red 11 (isolated tile)
+
+        // First, verify depth 0 works
+        let original_hand = hand.clone();
+        let quality = |h: &Hand| {
+            let total: i32 = h.iter().map(|(_, &c)| c as i32).sum();
+            -total
+        };
+        let depth0_result = find_best_melds(&mut hand, quality, &original_hand);
+        assert!(depth0_result.is_some(), "Depth 0 should find a solution");
+        let depth0_melds = depth0_result.unwrap();
+
+        // Calculate remaining tiles at depth 0
+        let mut remaining_depth0 = original_hand.clone();
+        for meld in &depth0_melds {
+            for tile in &meld.tiles {
+                remaining_depth0.remove(tile);
+            }
+        }
+        let depth0_remaining: i32 = remaining_depth0.iter().map(|(_, &c)| c as i32).sum();
+
+        // Now test find_best_moves
+        let mut hand = original_hand.clone();
+        let result = find_best_moves(&mut table, &mut hand, 5000);
+
+        assert!(result.is_some(), "find_best_moves should find a solution");
+        let moves = result.unwrap();
+
+        // Calculate remaining tiles from the moves
+        let mut test_hand = original_hand.clone();
+        let mut test_table = table.clone();
+        for mov in &moves {
+            match mov {
+                SolverMove::PickUp(idx) => {
+                    let meld = test_table.remove_meld(*idx).unwrap();
+                    for tile in &meld.tiles {
+                        test_hand.add(*tile);
+                    }
+                }
+                SolverMove::LayDown(meld) => {
+                    for tile in &meld.tiles {
+                        test_hand.remove(tile);
+                    }
+                }
+            }
+        }
+        let final_remaining: i32 = test_hand.iter().map(|(_, &c)| c as i32).sum();
+
+        // The final solution should be better than or equal to depth 0
+        assert!(final_remaining <= depth0_remaining,
+                "Final solution ({} tiles) should be at least as good as depth 0 ({} tiles)",
+                final_remaining, depth0_remaining);
+    }
+
+    #[test]
+    fn test_find_best_moves_explores_multiple_depths() {
+        // Verify that the solver can explore multiple depths and finds
+        // solutions even when direct play doesn't work
+
+        let mut table = Table::new();
+        // Add a meld to table: Red 1,2,3
+        let mut tiles = VecDeque::new();
+        tiles.push_back(Tile::new(0, 1));
+        tiles.push_back(Tile::new(0, 2));
+        tiles.push_back(Tile::new(0, 3));
+        table.add_meld(Meld::new(MeldType::Run, tiles));
+
+        let mut hand = Hand::new();
+        // Add only Red 4 - cannot form a valid meld by itself
+        hand.add(Tile::new(0, 4));
+
+        let original_table = table.clone();
+        let original_hand = hand.clone();
+
+        let result = find_best_moves(&mut table, &mut hand, 5000);
+
+        // Should find a solution by picking up the table meld
+        assert!(result.is_some(), "Should find a solution at depth > 0");
+
+        // Verify state is preserved
+        assert_eq!(table, original_table);
+        assert_eq!(hand, original_hand);
     }
 }

@@ -87,16 +87,19 @@ pub fn find_best_moves(
 - `max_ms`: Time limit in milliseconds
 
 **Algorithm:**
-1. **Direct Play**: Try to play from current hand using `find_best_melds`
-2. **BFS Search**: Explore removing melds from table (depth 1, then 2, etc., max 5)
-3. **For Each Combination**: Remove melds → add tiles to hand → call `find_best_melds`
-4. **Time Limit**: Stop if `max_ms` exceeded
+1. **BFS Exploration**: Explores all depths from 0 (direct play) to max_depth (up to 5)
+2. **Depth 0**: Play directly from hand with no table manipulation
+3. **Depth N**: Pick up N melds from table, add their tiles to hand, then call `find_best_melds`
+4. **Best Tracking**: Tracks the best solution found across all depths explored
+5. **Time Limit**: Continues until search tree exhausted or `max_ms` exceeded
+6. **Returns**: The best solution found (not just the first solution)
 
-**Quality Metric:** Negative of total tile count (fewer tiles remaining = better)
+**Quality Metric:** Negative of total tile count (fewer tiles remaining = better) or custom strategy
 
 **Invariants:**
 - Both `table` and `hand` are **always restored** to original state after the function returns
 - Move sequences are valid: PickUp moves occur before LayDown moves
+- Direct play (depth=0) has no special treatment; it's just another depth level
 
 ---
 
