@@ -1297,8 +1297,8 @@ function closeMenu() {
 // Logs Modal Management
 function openLogsModal() {
     closeMenu();
-    updateLogsDisplay();
     document.getElementById('logs-modal').style.display = 'flex';
+    updateLogsDisplay();
 }
 
 function closeLogsModal() {
