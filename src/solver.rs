@@ -17,10 +17,7 @@ impl TimeTracker {
             #[cfg(not(target_arch = "wasm32"))]
             start: std::time::Instant::now(),
             #[cfg(target_arch = "wasm32")]
-            start_ms: web_sys::window()
-                .and_then(|w| w.performance())
-                .map(|p| p.now())
-                .unwrap_or(0.0),
+            start_ms: js_sys::Date::now(),
             limit_ms,
         }
     }
@@ -32,10 +29,7 @@ impl TimeTracker {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let now = web_sys::window()
-                .and_then(|w| w.performance())
-                .map(|p| p.now())
-                .unwrap_or(0.0);
+            let now = js_sys::Date::now();
             (now - self.start_ms) >= self.limit_ms as f64
         }
     }

@@ -53,6 +53,7 @@ where F: Fn(&Hand) -> i32
 - Timer is checked at the start of each recursive `explore()` call during backtracking
 - Early exits when time limit exceeded, returning best solution found so far
 - Ensures responsive UI by preventing long-running searches from blocking
+- Uses `js_sys::Date::now()` for WASM timing (works in Web Workers, unlike `window.performance`)
 
 **Wildcard Handling:**
 - Wildcards (0xFF) treated as another tile type for counting
@@ -128,6 +129,11 @@ pub fn find_best_moves(
 - Animates smoothly every 50ms based on elapsed time vs configured time limit
 - Runs on main thread while solver executes in Web Worker
 - Automatically removed when search completes or times out
+
+**Worker Crash Detection:**
+- Main thread monitors for worker crashes/panics using a timeout (2x time limit + 5s buffer)
+- If worker doesn't respond within timeout, UI shows error and reloads page to recover
+- Prevents UI from being stuck in "Solving..." state indefinitely
 
 **Result Toast:**
 - Shows detailed completion info after solving:

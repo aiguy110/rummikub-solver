@@ -17,6 +17,7 @@ let solverWorker = null;
 let solverWorkerReady = false;
 let currentTimerWidget = null;
 let currentTimerInterval = null;
+let solverTimeoutId = null; // Timeout to detect worker crashes
 
 // Initialize WASM
 async function initWasm() {
@@ -80,6 +81,12 @@ function initWorker() {
 function handleSolverResult(result) {
     const timeLimit = parseInt(document.getElementById('time-limit').value);
 
+    // Clear worker timeout
+    if (solverTimeoutId) {
+        clearTimeout(solverTimeoutId);
+        solverTimeoutId = null;
+    }
+
     // Stop timer animation and remove widget
     if (currentTimerInterval) {
         clearInterval(currentTimerInterval);
@@ -100,6 +107,12 @@ function handleSolverResult(result) {
 
 // Handle solver error from worker
 function handleSolverError(error) {
+    // Clear worker timeout
+    if (solverTimeoutId) {
+        clearTimeout(solverTimeoutId);
+        solverTimeoutId = null;
+    }
+
     // Stop timer animation and remove widget
     if (currentTimerInterval) {
         clearInterval(currentTimerInterval);
@@ -115,6 +128,33 @@ function handleSolverError(error) {
 
     console.error('Solver error:', error);
     showError(error);
+}
+
+// Handle worker timeout/crash
+function handleWorkerTimeout() {
+    console.error('Worker timed out or crashed - no response received');
+
+    solverTimeoutId = null;
+
+    // Stop timer animation and remove widget
+    if (currentTimerInterval) {
+        clearInterval(currentTimerInterval);
+        currentTimerInterval = null;
+    }
+    removeTimerWidget();
+
+    // Re-enable solve button
+    const solveBtn = document.getElementById('solve-btn');
+    solveBtn.disabled = false;
+    solveBtn.textContent = 'Find Best Moves';
+    solveBtn.classList.remove('loading');
+
+    showError('Solver worker crashed or became unresponsive. The page will be reloaded to recover.');
+
+    // Reload after a short delay to allow user to see the error
+    setTimeout(() => {
+        window.location.reload();
+    }, 3000);
 }
 
 // Initialize UI
@@ -745,6 +785,11 @@ async function solve() {
             handArray.push(tile);
         }
     });
+
+    // Set up a timeout to detect if worker crashes or hangs
+    // Give it extra time beyond the configured limit (2x + 5 seconds buffer)
+    const workerTimeoutMs = (timeLimit * 2) + 5000;
+    solverTimeoutId = setTimeout(handleWorkerTimeout, workerTimeoutMs);
 
     // Send solve request to worker
     solverWorker.postMessage({
