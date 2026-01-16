@@ -31,6 +31,7 @@ fn find_best_melds<F>(
     hand: &mut Hand,
     quality: F,
     hand_to_beat: &Hand,
+    timer: &TimeTracker,
 ) -> Option<Vec<Meld>>
 where F: Fn(&Hand) -> i32
 ```
@@ -39,13 +40,19 @@ where F: Fn(&Hand) -> i32
 - `hand`: The player's current tiles
 - `quality`: Closure scoring terminal hands (higher = better)
 - `hand_to_beat`: Baseline hand to beat (must reduce at least one tile type count)
+- `timer`: Time tracker for timeout enforcement
 
 **Algorithm:**
 1. **Meld Generation**: Pre-generate all possible melds (runs/groups) including wildcard substitutions
 2. **Indexing**: Build tile → meld indices for fast conflict detection
-3. **Backtracking**: Explore meld combinations in canonical order
+3. **Backtracking**: Explore meld combinations in canonical order with timeout checks
 4. **Pruning**: Track invalid melds as tiles are consumed
 5. **Evaluation**: Score terminal hands that "beat" the baseline
+
+**Timeout Handling:**
+- Timer is checked at the start of each recursive `explore()` call during backtracking
+- Early exits when time limit exceeded, returning best solution found so far
+- Ensures responsive UI by preventing long-running searches from blocking
 
 **Wildcard Handling:**
 - Wildcards (0xFF) treated as another tile type for counting
@@ -57,8 +64,7 @@ where F: Fn(&Hand) -> i32
 - Must have strictly fewer tiles than baseline for at least one type
 
 **Invariant:**
-- The `hand` parameter is **always restored** to its original state after the function returns, regardless of whether a solution is found or not
-- This is achieved by cloning the hand at the start and restoring it before returning
+- The `hand` parameter is **always restored** to its original state after the function returns
 
 ### `SolverMove` Enum
 
@@ -94,12 +100,13 @@ pub fn find_best_moves(
 - `final_quality`: Hand quality after applying solution
 
 **Algorithm:**
-1. **BFS Exploration**: Explores all depths from 0 (direct play) to max_depth (up to 5)
+1. **BFS Exploration**: Explores all depths from 0 (direct play) to table.len() (pick up all melds)
 2. **Depth 0**: Play directly from hand with no table manipulation
 3. **Depth N**: Pick up N melds from table, add their tiles to hand, then call `find_best_melds`
 4. **Best Tracking**: Tracks the best solution found across all depths explored
 5. **Time Limit**: Continues until search tree exhausted or `max_ms` exceeded
-6. **Metadata Tracking**: Records depth reached, completion status, and quality improvements
+6. **Timeout Checks**: Timer checked before each depth level and during backtracking search
+7. **Metadata Tracking**: Records depth reached, completion status, and quality improvements
 
 **Quality Metric:** Negative of total tile count (fewer tiles remaining = better) or custom strategy
 

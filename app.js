@@ -765,7 +765,7 @@ function showSolverResultToast(result, timeLimit) {
 
     if (result.success) {
         title = 'Solution Found!';
-        const improvement = result.initial_quality - result.final_quality;
+        const improvement = result.final_quality - result.initial_quality;
         const improvementText = improvement > 0
             ? `Improved by ${improvement} ${result.initial_quality < 0 ? 'tiles' : 'points'}`
             : 'No improvement';

@@ -151,7 +151,7 @@ where
     let mut depth_reached = 0;
 
     // BFS: Try depth 0 (direct play), then 1, 2, 3, etc.
-    let max_depth = table.len().min(5); // Limit depth to avoid explosion
+    let max_depth = table.len();
 
     for depth in 0..=max_depth {
         // Check time limit before starting each depth
@@ -228,7 +228,7 @@ where
 
     // Depth 0 means direct play from hand (no table manipulation)
     if depth == 0 {
-        if let Some(melds) = find_best_melds(hand, quality, original_hand) {
+        if let Some(melds) = find_best_melds(hand, quality, original_hand, timer) {
             let moves: Vec<SolverMove> = melds
                 .iter()
                 .map(|meld| SolverMove::LayDown(meld.clone()))
@@ -269,7 +269,7 @@ where
         }
 
         // Try this combination and update best solution if better
-        try_meld_combination(table, hand, original_hand, &indices, quality, best_solution);
+        try_meld_combination(table, hand, original_hand, &indices, quality, timer, best_solution);
 
         // Generate next combination
         if !next_combination(&mut indices, table_size) {
@@ -285,6 +285,7 @@ fn try_meld_combination<F>(
     original_hand: &Hand,
     indices: &[usize],
     quality: F,
+    timer: &TimeTracker,
     best_solution: &mut Option<(Vec<SolverMove>, i32)>,
 )
 where
@@ -306,7 +307,7 @@ where
     }
 
     // Try to find melds from the new hand
-    if let Some(melds) = find_best_melds(hand, quality, original_hand) {
+    if let Some(melds) = find_best_melds(hand, quality, original_hand, timer) {
         // Build the move sequence
         let mut moves = Vec::new();
 
@@ -387,10 +388,11 @@ fn next_combination(combo: &mut [usize], n: usize) -> bool {
 /// according to the quality function. The remaining hand must "beat" the
 /// hand_to_beat by having strictly fewer tiles of at least one type, and
 /// not having any tile types that hand_to_beat doesn't have.
-pub fn find_best_melds<F>(
+fn find_best_melds<F>(
     hand: &mut Hand,
     quality: F,
     hand_to_beat: &Hand,
+    timer: &TimeTracker,
 ) -> Option<Vec<Meld>>
 where
     F: Fn(&Hand) -> i32,
@@ -418,6 +420,7 @@ where
         &mut invalid_melds,
         &quality,
         hand_to_beat,
+        timer,
         &mut best,
     );
 
@@ -670,10 +673,16 @@ fn explore<F>(
     invalid_melds: &mut HashSet<usize>,
     quality: &F,
     hand_to_beat: &Hand,
+    timer: &TimeTracker,
     best: &mut Option<(Vec<usize>, i32)>,
 ) where
     F: Fn(&Hand) -> i32,
 {
+    // Check timer for early exit
+    if timer.is_expired() {
+        return;
+    }
+
     // Terminal check or early termination
     if current_index >= all_possible_melds.len() {
         evaluate_terminal_state(remaining_tiles, active_melds, quality, hand_to_beat, best);
@@ -690,6 +699,7 @@ fn explore<F>(
         invalid_melds,
         quality,
         hand_to_beat,
+        timer,
         best,
     );
 
@@ -719,6 +729,7 @@ fn explore<F>(
             invalid_melds,
             quality,
             hand_to_beat,
+            timer,
             best,
         );
 
@@ -1011,7 +1022,8 @@ mod tests {
             -total // Negative because we want to minimize
         };
 
-        let result = find_best_melds(&mut hand, quality, &hand_to_beat);
+        let timer = TimeTracker::new(1000);
+        let result = find_best_melds(&mut hand, quality, &hand_to_beat, &timer);
 
         // Should find a solution (play the run of 4)
         assert!(result.is_some());
@@ -1090,7 +1102,8 @@ mod tests {
             -total
         };
 
-        let _result = find_best_melds(&mut hand, quality, &hand_to_beat);
+        let timer = TimeTracker::new(1000);
+        let _result = find_best_melds(&mut hand, quality, &hand_to_beat, &timer);
 
         // Hand should be unchanged regardless of result
         assert_eq!(hand, original);
@@ -1113,7 +1126,8 @@ mod tests {
             -total
         };
 
-        let result = find_best_melds(&mut hand, quality, &hand_to_beat);
+        let timer = TimeTracker::new(1000);
+        let result = find_best_melds(&mut hand, quality, &hand_to_beat, &timer);
 
         // Hand should be unchanged even when no solution is found
         assert_eq!(hand, original);
@@ -1331,7 +1345,8 @@ mod tests {
             let total: i32 = h.iter().map(|(_, &c)| c as i32).sum();
             -total
         };
-        let depth0_result = find_best_melds(&mut hand, quality, &original_hand);
+        let timer = TimeTracker::new(5000);
+        let depth0_result = find_best_melds(&mut hand, quality, &original_hand, &timer);
         assert!(depth0_result.is_some(), "Depth 0 should find a solution");
         let depth0_melds = depth0_result.unwrap();
 
