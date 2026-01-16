@@ -59,7 +59,14 @@
             <div class="dialog-content logs-dialog">
                 <div class="logs-header">
                     <h3>Console Logs</h3>
-                    <button id="clear-logs-btn" class="btn btn-secondary btn-small">Clear</button>
+                    <div class="logs-controls">
+                        <label class="debug-toggle">
+                            <span>Show Debug</span>
+                            <input type="checkbox" id="show-debug-logs">
+                            <span class="toggle-switch"></span>
+                        </label>
+                        <button id="clear-logs-btn" class="btn btn-secondary btn-small">Clear</button>
+                    </div>
                 </div>
                 <div id="logs-container" class="logs-container">
                     <p class="empty-message">No logs yet</p>

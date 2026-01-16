@@ -55,6 +55,7 @@ let processingQueue = []; // track ongoing photo processing
 let nextProcessingId = 0; // unique ID for each processing request
 let confirmationQueue = []; // pending confirmations
 let nextConfirmationId = 0; // unique ID for confirmations
+let showDebugLogs = false; // whether to show debug logs in the logs modal
 
 // Web Worker for solving
 let solverWorker = null;
@@ -1326,13 +1327,22 @@ function updateLogsDisplay() {
     const modal = document.getElementById('logs-modal');
     if (!modal || modal.style.display === 'none') return;
 
-    if (capturedLogs.length === 0) {
-        container.innerHTML = '<p class="empty-message">No logs yet</p>';
+    // Filter logs based on debug toggle
+    const logsToDisplay = capturedLogs.filter(log => {
+        // If debug logs are hidden, filter out logs containing "[DEBUG]"
+        if (!showDebugLogs && log.message.includes('[DEBUG]')) {
+            return false;
+        }
+        return true;
+    });
+
+    if (logsToDisplay.length === 0) {
+        container.innerHTML = '<p class="empty-message">No logs to display</p>';
         return;
     }
 
     container.innerHTML = '';
-    capturedLogs.forEach(log => {
+    logsToDisplay.forEach(log => {
         const entry = document.createElement('div');
         entry.className = `log-entry ${log.level}`;
 
@@ -1482,10 +1492,50 @@ async function processImageWithOpenAI(base64Image, mode, processingId, modeLabel
         const prompt = mode === 'hand' ? handPrompt : tablePrompt;
         const tool = mode === 'hand' ? EXTRACT_HAND_TOOL : EXTRACT_TABLE_TOOL;
 
-        // Log request details (excluding base64 image for brevity)
-        console.log(`[API Request] Model: ${modelName}, Mode: ${mode}`);
-        console.log(`[API Request] Prompt: ${prompt}`);
-        console.log(`[API Request] Tool: ${tool.function.name}`);
+        // Prepare request body
+        const requestBody = {
+            model: modelName,
+            messages: [
+                {
+                    role: 'user',
+                    content: [
+                        {
+                            type: 'image_url',
+                            image_url: {
+                                url: `data:image/jpeg;base64,${base64Image}`
+                            }
+                        },
+                        {
+                            type: 'text',
+                            text: prompt
+                        }
+                    ]
+                }
+            ],
+            tools: [tool],
+            tool_choice: {
+                type: "function",
+                function: { name: tool.function.name }
+            },
+            max_tokens: 1024,
+            temperature: 0.7
+        };
+
+        // Log request details
+        console.log(`[DEBUG] API Request - URL: https://openrouter.ai/api/v1/chat/completions`);
+        console.log(`[DEBUG] API Request - Model: ${modelName}`);
+        console.log(`[DEBUG] API Request - Mode: ${mode}`);
+        console.log(`[DEBUG] API Request - Prompt: ${prompt}`);
+        console.log(`[DEBUG] API Request - Tool: ${tool.function.name}`);
+        console.log(`[DEBUG] API Request - Full body (image omitted):`, {
+            ...requestBody,
+            messages: [{
+                ...requestBody.messages[0],
+                content: requestBody.messages[0].content.map(c =>
+                    c.type === 'image_url' ? { type: 'image_url', image_url: { url: '(base64 image data omitted)' } } : c
+                )
+            }]
+        });
 
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
@@ -1495,40 +1545,17 @@ async function processImageWithOpenAI(base64Image, mode, processingId, modeLabel
                 'HTTP-Referer': window.location.href,
                 'X-Title': 'Rummikub Solver'
             },
-            body: JSON.stringify({
-                model: modelName,
-                messages: [
-                    {
-                        role: 'user',
-                        content: [
-                            {
-                                type: 'image_url',
-                                image_url: {
-                                    url: `data:image/jpeg;base64,${base64Image}`
-                                }
-                            },
-                            {
-                                type: 'text',
-                                text: prompt
-                            }
-                        ]
-                    }
-                ],
-                tools: [tool],
-                tool_choice: {
-                    type: "function",
-                    function: { name: tool.function.name }
-                },
-                max_tokens: 1024,
-                temperature: 0.7
-            })
+            body: JSON.stringify(requestBody)
         });
+
+        console.log(`[DEBUG] API Response - Status: ${response.status} ${response.statusText}`);
 
         if (!response.ok) {
             let errorMessage = `API Error (HTTP ${response.status})`;
 
             try {
                 const errorData = await response.json();
+                console.log(`[DEBUG] API Response - Error data:`, errorData);
                 if (errorData.error?.message) {
                     errorMessage += `: ${errorData.error.message}`;
                 } else if (errorData.message) {
@@ -1537,6 +1564,7 @@ async function processImageWithOpenAI(base64Image, mode, processingId, modeLabel
             } catch (e) {
                 // If response is not JSON, use status text
                 errorMessage += `: ${response.statusText || 'Unknown error'}`;
+                console.log(`[DEBUG] API Response - Failed to parse error response as JSON`);
             }
 
             if (response.status === 401) {
@@ -1549,12 +1577,13 @@ async function processImageWithOpenAI(base64Image, mode, processingId, modeLabel
         }
 
         const data = await response.json();
+        console.log(`[DEBUG] API Response - Full response data:`, data);
 
         // Log response message content and tool calls
         const messageContent = data.choices?.[0]?.message?.content;
         const toolCalls = data.choices?.[0]?.message?.tool_calls;
-        console.log(`[API Response] Message content: ${messageContent || '(none)'}`);
-        console.log(`[API Response] Tool calls:`, toolCalls || '(none)');
+        console.log(`[DEBUG] API Response - Message content: ${messageContent || '(none)'}`);
+        console.log(`[DEBUG] API Response - Tool calls:`, toolCalls || '(none)');
 
         if (!data.choices || data.choices.length === 0) {
             showToast(`${modeLabel} Processing Failed`, 'Invalid API response: No choices returned', 'error', 8000);
@@ -1750,6 +1779,10 @@ function attachEventListeners() {
     // Logs modal
     document.getElementById('close-logs-btn').addEventListener('click', closeLogsModal);
     document.getElementById('clear-logs-btn').addEventListener('click', clearLogs);
+    document.getElementById('show-debug-logs').addEventListener('change', (e) => {
+        showDebugLogs = e.target.checked;
+        updateLogsDisplay();
+    });
     document.getElementById('logs-modal').addEventListener('click', (e) => {
         if (e.target.id === 'logs-modal') {
             closeLogsModal();
