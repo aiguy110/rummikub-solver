@@ -844,6 +844,61 @@ function renderTilesAsHtml(tiles) {
     }).join('');
 }
 
+// Render a meld as HTML
+function renderMeldAsHtml(meld) {
+    const tilesHtml = renderTilesAsHtml(meld.tiles);
+    return `<span class="meld-type-badge">${meld.type}</span> <span class="meld-tiles">${tilesHtml}</span>`;
+}
+
+// Render a human-readable move as HTML
+function renderHumanMoveAsHtml(move) {
+    switch (move.type) {
+        case 'play_from_hand':
+            return `Play from hand: ${renderMeldAsHtml(move.meld)}`;
+
+        case 'extend_meld': {
+            const addedHtml = renderTilesAsHtml(move.added_tiles);
+            return `Extend ${renderMeldAsHtml(move.original)} by adding <span class="meld-tiles">${addedHtml}</span> → ${renderMeldAsHtml(move.result)}`;
+        }
+
+        case 'take_from_meld': {
+            const takenHtml = renderTilesAsHtml(move.taken_tiles);
+            return `Take <span class="meld-tiles">${takenHtml}</span> from ${renderMeldAsHtml(move.original)}, leaving ${renderMeldAsHtml(move.remaining)}`;
+        }
+
+        case 'split_meld': {
+            const partsHtml = move.parts.map(renderMeldAsHtml).join(' and ');
+            return `Split ${renderMeldAsHtml(move.original)} into ${partsHtml}`;
+        }
+
+        case 'join_melds': {
+            const sourcesHtml = move.sources.map(renderMeldAsHtml).join(' + ');
+            return `Combine ${sourcesHtml} → ${renderMeldAsHtml(move.result)}`;
+        }
+
+        case 'swap_wild': {
+            const swapsHtml = move.swaps.map(s =>
+                `<span class="meld-tiles">${renderTilesAsHtml([s.replacement])}</span> for <span class="meld-tiles">${renderTilesAsHtml([s.wild_taken])}</span>`
+            ).join(', ');
+            return `Swap ${swapsHtml} in ${renderMeldAsHtml(move.original)} → ${renderMeldAsHtml(move.result)}`;
+        }
+
+        case 'rearrange': {
+            const consumedHtml = move.consumed.length > 0
+                ? move.consumed.map(renderMeldAsHtml).join(', ')
+                : 'nothing';
+            const producedHtml = move.produced.map(renderMeldAsHtml).join(', ');
+            const handHtml = move.hand_tiles_used.length > 0
+                ? ` using <span class="meld-tiles">${renderTilesAsHtml(move.hand_tiles_used)}</span> from hand`
+                : '';
+            return `Rearrange ${consumedHtml}${handHtml} → ${producedHtml}`;
+        }
+
+        default:
+            return `Unknown move type: ${move.type}`;
+    }
+}
+
 // Display solver results
 function displayResults(result) {
     const section = document.getElementById('results-section');
@@ -860,9 +915,10 @@ function displayResults(result) {
         return;
     }
 
-    const moves = result.moves || [];
+    const humanMoves = result.human_moves || [];
+    const rawMoves = result.moves || [];
 
-    if (moves.length === 0) {
+    if (humanMoves.length === 0 && rawMoves.length === 0) {
         display.innerHTML = `
             <div class="result-success">
                 No moves needed - your hand is already optimal!
@@ -873,36 +929,55 @@ function displayResults(result) {
 
     let html = `
         <div class="result-success">
-            Found solution with ${moves.length} move${moves.length > 1 ? 's' : ''}!
+            Found solution with ${humanMoves.length} action${humanMoves.length !== 1 ? 's' : ''}!
         </div>
-        <ol class="move-list">
     `;
 
-    moves.forEach((move, index) => {
-        html += `<li class="move-item">`;
-        html += `<span class="move-number">${index + 1}.</span>`;
+    // Display human-readable moves
+    if (humanMoves.length > 0) {
+        html += `<ol class="move-list human-moves">`;
+        humanMoves.forEach((move, index) => {
+            html += `<li class="move-item">`;
+            html += `<span class="move-number">${index + 1}.</span>`;
+            html += renderHumanMoveAsHtml(move);
+            html += `</li>`;
+        });
+        html += '</ol>';
+    }
 
-        if (move.action === 'pickup') {
-            // Get the meld from the table and show its tiles
-            const meldIndex = move.index;
-            if (meldIndex >= 0 && meldIndex < table.length) {
-                const meld = table[meldIndex];
+    // Add collapsible raw moves section for debugging
+    if (rawMoves.length > 0) {
+        html += `
+            <details class="raw-moves-section">
+                <summary>Show raw solver moves (${rawMoves.length})</summary>
+                <ol class="move-list raw-moves">
+        `;
+
+        rawMoves.forEach((move, index) => {
+            html += `<li class="move-item">`;
+            html += `<span class="move-number">${index + 1}.</span>`;
+
+            if (move.action === 'pickup') {
+                const meldIndex = move.index;
+                if (meldIndex >= 0 && meldIndex < table.length) {
+                    const meld = table[meldIndex];
+                    const tilesHtml = renderTilesAsHtml(meld.tiles);
+                    html += `Pick up <span class="meld-type-badge">${meld.type}</span> <span class="meld-tiles">${tilesHtml}</span>`;
+                } else {
+                    html += `Pick up meld #${meldIndex + 1} from the table`;
+                }
+            } else if (move.action === 'laydown') {
+                const meld = move.meld;
                 const tilesHtml = renderTilesAsHtml(meld.tiles);
-                html += `Pick up <span class="meld-type-badge">${meld.type}</span> <span class="meld-tiles">${tilesHtml}</span>`;
-            } else {
-                // Fallback if meld index is invalid
-                html += `Pick up meld #${meldIndex + 1} from the table`;
+                html += `Lay down <span class="meld-type-badge">${meld.type}</span> <span class="meld-tiles">${tilesHtml}</span>`;
             }
-        } else if (move.action === 'laydown') {
-            const meld = move.meld;
-            const tilesHtml = renderTilesAsHtml(meld.tiles);
-            html += `Lay down <span class="meld-type-badge">${meld.type}</span> <span class="meld-tiles">${tilesHtml}</span>`;
-        }
 
-        html += `</li>`;
-    });
+            html += `</li>`;
+        });
 
-    html += '</ol>';
+        html += '</ol></details>';
+    }
+
     display.innerHTML = html;
 
     // Scroll to results

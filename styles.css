@@ -477,6 +477,38 @@ header {
     margin-right: 8px;
 }
 
+/* Raw moves section (collapsible) */
+.raw-moves-section {
+    margin-top: 20px;
+    border-top: 1px solid var(--color-border);
+    padding-top: 12px;
+}
+
+.raw-moves-section summary {
+    cursor: pointer;
+    color: var(--color-text-light);
+    font-size: 0.9rem;
+    padding: 8px 0;
+    user-select: none;
+}
+
+.raw-moves-section summary:hover {
+    color: var(--color-text);
+}
+
+.raw-moves-section .move-list {
+    margin-top: 12px;
+}
+
+.raw-moves-section .move-item {
+    border-left-color: var(--color-secondary);
+    background: var(--color-bg);
+}
+
+.raw-moves-section .move-number {
+    color: var(--color-secondary);
+}
+
 /* Save/Load Controls */
 .save-load-controls {
     display: flex;

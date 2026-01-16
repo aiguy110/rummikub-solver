@@ -36,6 +36,8 @@ pub struct SolverResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub moves: Option<Vec<MoveJson>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub human_moves: Option<Vec<HumanMoveJson>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Whether the search completed fully (true) or timed out (false)
     pub search_completed: bool,
@@ -45,6 +47,61 @@ pub struct SolverResult {
     pub initial_quality: i32,
     /// Final hand quality after applying the solution
     pub final_quality: i32,
+}
+
+/// JSON-serializable representation of a human-readable move
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum HumanMoveJson {
+    #[serde(rename = "play_from_hand")]
+    PlayFromHand { meld: MeldJson },
+
+    #[serde(rename = "extend_meld")]
+    ExtendMeld {
+        original: MeldJson,
+        added_tiles: Vec<String>,
+        result: MeldJson,
+    },
+
+    #[serde(rename = "take_from_meld")]
+    TakeFromMeld {
+        original: MeldJson,
+        taken_tiles: Vec<String>,
+        remaining: MeldJson,
+    },
+
+    #[serde(rename = "split_meld")]
+    SplitMeld {
+        original: MeldJson,
+        parts: Vec<MeldJson>,
+    },
+
+    #[serde(rename = "join_melds")]
+    JoinMelds {
+        sources: Vec<MeldJson>,
+        result: MeldJson,
+    },
+
+    #[serde(rename = "swap_wild")]
+    SwapWild {
+        original: MeldJson,
+        swaps: Vec<SwapJson>,
+        result: MeldJson,
+    },
+
+    #[serde(rename = "rearrange")]
+    Rearrange {
+        consumed: Vec<MeldJson>,
+        produced: Vec<MeldJson>,
+        hand_tiles_used: Vec<String>,
+    },
+}
+
+/// JSON representation of a wild swap
+#[derive(Serialize, Deserialize)]
+pub struct SwapJson {
+    pub replacement: String,
+    pub wild_taken: String,
 }
 
 /// Main WASM API: Solve a Rummikub game state
@@ -70,6 +127,7 @@ pub fn solve_rummikub(
         Err(e) => serde_json::to_string(&SolverResult {
             success: false,
             moves: None,
+            human_moves: None,
             error: Some(e),
             search_completed: false,
             depth_reached: 0,
@@ -115,6 +173,10 @@ fn solve_internal(
         _ => return Err(format!("Unknown strategy: {}", strategy_str)),
     };
 
+    // Save original state for human move translation
+    let original_table = table.clone();
+    let original_hand = hand.clone();
+
     // 5. Call solver with strategy
     let solver_result =
         solver::find_best_moves_with_strategy(&mut table, &mut hand, time_limit_ms, strategy);
@@ -124,9 +186,16 @@ fn solve_internal(
         moves.iter().map(|m| move_to_json(m.clone())).collect()
     });
 
+    // 7. Translate to human-readable moves
+    let human_moves_json = solver_result.moves.as_ref().map(|moves| {
+        let human_moves = solver::translate_to_human_moves(&original_table, &original_hand, moves);
+        human_moves.iter().map(human_move_to_json).collect()
+    });
+
     Ok(SolverResult {
         success: solver_result.moves.is_some(),
         moves: moves_json,
+        human_moves: human_moves_json,
         error: if solver_result.moves.is_none() {
             Some("No solution found within time limit".to_string())
         } else {
@@ -170,6 +239,65 @@ fn move_to_json(solver_move: solver::SolverMove) -> MoveJson {
         solver::SolverMove::PickUp(index) => MoveJson::PickUp { index },
         solver::SolverMove::LayDown(meld) => MoveJson::LayDown {
             meld: meld_to_json(&meld),
+        },
+    }
+}
+
+/// Convert internal HumanMove to JSON representation
+fn human_move_to_json(human_move: &solver::HumanMove) -> HumanMoveJson {
+    match human_move {
+        solver::HumanMove::PlayFromHand(meld) => HumanMoveJson::PlayFromHand {
+            meld: meld_to_json(meld),
+        },
+        solver::HumanMove::ExtendMeld {
+            original,
+            added_tiles,
+            result,
+        } => HumanMoveJson::ExtendMeld {
+            original: meld_to_json(original),
+            added_tiles: added_tiles.iter().map(|t| t.to_string()).collect(),
+            result: meld_to_json(result),
+        },
+        solver::HumanMove::TakeFromMeld {
+            original,
+            taken_tiles,
+            remaining,
+        } => HumanMoveJson::TakeFromMeld {
+            original: meld_to_json(original),
+            taken_tiles: taken_tiles.iter().map(|t| t.to_string()).collect(),
+            remaining: meld_to_json(remaining),
+        },
+        solver::HumanMove::SplitMeld { original, parts } => HumanMoveJson::SplitMeld {
+            original: meld_to_json(original),
+            parts: parts.iter().map(meld_to_json).collect(),
+        },
+        solver::HumanMove::JoinMelds { sources, result } => HumanMoveJson::JoinMelds {
+            sources: sources.iter().map(meld_to_json).collect(),
+            result: meld_to_json(result),
+        },
+        solver::HumanMove::SwapWild {
+            original,
+            swaps,
+            result,
+        } => HumanMoveJson::SwapWild {
+            original: meld_to_json(original),
+            swaps: swaps
+                .iter()
+                .map(|(replacement, wild)| SwapJson {
+                    replacement: replacement.to_string(),
+                    wild_taken: wild.to_string(),
+                })
+                .collect(),
+            result: meld_to_json(result),
+        },
+        solver::HumanMove::Rearrange {
+            consumed,
+            produced,
+            hand_tiles_used,
+        } => HumanMoveJson::Rearrange {
+            consumed: consumed.iter().map(meld_to_json).collect(),
+            produced: produced.iter().map(meld_to_json).collect(),
+            hand_tiles_used: hand_tiles_used.iter().map(|t| t.to_string()).collect(),
         },
     }
 }

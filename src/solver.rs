@@ -68,6 +68,93 @@ pub struct SolverResult {
     pub final_quality: i32,
 }
 
+// ============================================================================
+// Human-Readable Move Types
+// ============================================================================
+
+/// Declarative description of how a meld was transformed or created.
+/// These moves describe transformations in terms humans can understand,
+/// rather than the internal "destroy and rebuild" approach of SolverMove.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HumanMove {
+    /// Play a meld entirely from hand (no table tiles involved)
+    PlayFromHand(Meld),
+
+    /// Add tile(s) from hand to an existing meld
+    ExtendMeld {
+        original: Meld,
+        added_tiles: Vec<Tile>,
+        result: Meld,
+    },
+
+    /// Take tile(s) from a meld, leaving a valid meld behind
+    TakeFromMeld {
+        original: Meld,
+        taken_tiles: Vec<Tile>,
+        remaining: Meld,
+    },
+
+    /// Split one meld into multiple melds
+    SplitMeld {
+        original: Meld,
+        parts: Vec<Meld>,
+    },
+
+    /// Combine multiple melds (or meld fragments) into one
+    JoinMelds {
+        sources: Vec<Meld>,
+        result: Meld,
+    },
+
+    /// Replace wild(s) in a meld with real tiles, taking the wilds
+    SwapWild {
+        original: Meld,
+        /// (replacement_from_hand, wild_taken)
+        swaps: Vec<(Tile, Tile)>,
+        result: Meld,
+    },
+
+    /// Complex rearrangement that doesn't fit other patterns
+    Rearrange {
+        consumed: Vec<Meld>,
+        produced: Vec<Meld>,
+        hand_tiles_used: Vec<Tile>,
+    },
+}
+
+/// Tracks where a tile came from
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum TileSource {
+    Hand,
+    TableMeld(usize), // index into original_table
+}
+
+/// Assignment of a tile from source to destination
+#[derive(Debug, Clone)]
+struct TileAssignment {
+    tile: Tile,
+    source: TileSource,
+    dest_meld_idx: usize,
+}
+
+/// Tracks what happened to an original meld
+#[derive(Debug)]
+struct MeldFate {
+    original_idx: usize,
+    original: Meld,
+    /// Where did each tile end up? (index into new_melds, or None if not placed)
+    tile_destinations: Vec<Option<usize>>,
+}
+
+/// Tracks where a new meld's tiles came from
+#[derive(Debug)]
+struct MeldOrigin {
+    new_idx: usize,
+    new_meld: Meld,
+    /// Where did each tile come from?
+    tile_sources: Vec<TileSource>,
+}
+
 impl ScoringStrategy {
     fn evaluate(&self, hand: &Hand) -> i32 {
         match self {
@@ -857,6 +944,459 @@ fn beats(terminal: &Hand, baseline: &Hand) -> bool {
     has_strict_improvement
 }
 
+// ============================================================================
+// Human Move Translation
+// ============================================================================
+
+/// Translate a sequence of SolverMoves into human-readable HumanMoves.
+///
+/// This function analyzes the before/after state of the table and hand to produce
+/// moves that describe transformations in terms humans can understand.
+pub fn translate_to_human_moves(
+    original_table: &Table,
+    original_hand: &Hand,
+    solver_moves: &[SolverMove],
+) -> Vec<HumanMove> {
+    // Extract picked up melds and laid down melds from solver moves
+    let mut picked_melds: Vec<(usize, Meld)> = Vec::new();
+    let mut laid_down_melds: Vec<Meld> = Vec::new();
+
+    for mov in solver_moves {
+        match mov {
+            SolverMove::PickUp(idx) => {
+                if let Some(meld) = original_table.melds().get(*idx) {
+                    picked_melds.push((*idx, meld.clone()));
+                }
+            }
+            SolverMove::LayDown(meld) => {
+                laid_down_melds.push(meld.clone());
+            }
+        }
+    }
+
+    // If no moves, return empty
+    if laid_down_melds.is_empty() {
+        return Vec::new();
+    }
+
+    // Assign tile provenance
+    let assignments = assign_tile_provenance(&picked_melds, original_hand, &laid_down_melds);
+
+    // Build MeldOrigin for each new meld
+    let meld_origins = build_meld_origins(&laid_down_melds, &assignments);
+
+    // Build MeldFate for each picked-up meld
+    let meld_fates = build_meld_fates(&picked_melds, &assignments);
+
+    // Now analyze patterns and generate human moves
+    generate_human_moves(&picked_melds, &laid_down_melds, &meld_origins, &meld_fates, original_hand)
+}
+
+/// Assign tile provenance - determine which source tile maps to which destination tile
+fn assign_tile_provenance(
+    picked_melds: &[(usize, Meld)],
+    hand: &Hand,
+    new_melds: &[Meld],
+) -> Vec<TileAssignment> {
+    // Build source pool: list of (Tile, TileSource)
+    let mut source_pool: Vec<(Tile, TileSource)> = Vec::new();
+
+    for (idx, meld) in picked_melds {
+        for tile in &meld.tiles {
+            source_pool.push((*tile, TileSource::TableMeld(*idx)));
+        }
+    }
+    for (tile, &count) in hand.iter() {
+        for _ in 0..count {
+            source_pool.push((*tile, TileSource::Hand));
+        }
+    }
+
+    // Greedy assignment: prefer table sources over hand sources
+    let mut assignments = Vec::new();
+    let mut used = vec![false; source_pool.len()];
+
+    for (meld_idx, meld) in new_melds.iter().enumerate() {
+        for tile in meld.tiles.iter() {
+            // First try to find matching table source
+            let source_idx = source_pool
+                .iter()
+                .enumerate()
+                .position(|(i, (t, src))| {
+                    !used[i] && *t == *tile && matches!(src, TileSource::TableMeld(_))
+                })
+                .or_else(|| {
+                    // Fall back to hand source
+                    source_pool
+                        .iter()
+                        .enumerate()
+                        .position(|(i, (t, _))| !used[i] && *t == *tile)
+                });
+
+            if let Some(i) = source_idx {
+                used[i] = true;
+                assignments.push(TileAssignment {
+                    tile: *tile,
+                    source: source_pool[i].1,
+                    dest_meld_idx: meld_idx,
+                });
+            }
+        }
+    }
+
+    assignments
+}
+
+/// Build MeldOrigin for each new meld
+fn build_meld_origins(new_melds: &[Meld], assignments: &[TileAssignment]) -> Vec<MeldOrigin> {
+    new_melds
+        .iter()
+        .enumerate()
+        .map(|(idx, meld)| {
+            let tile_sources: Vec<TileSource> = meld
+                .tiles
+                .iter()
+                .map(|tile| {
+                    // Find the assignment for this tile in this meld
+                    assignments
+                        .iter()
+                        .find(|a| a.dest_meld_idx == idx && a.tile == *tile)
+                        .map(|a| a.source)
+                        .unwrap_or(TileSource::Hand)
+                })
+                .collect();
+
+            MeldOrigin {
+                new_idx: idx,
+                new_meld: meld.clone(),
+                tile_sources,
+            }
+        })
+        .collect()
+}
+
+/// Build MeldFate for each picked-up meld
+fn build_meld_fates(
+    picked_melds: &[(usize, Meld)],
+    assignments: &[TileAssignment],
+) -> Vec<MeldFate> {
+    picked_melds
+        .iter()
+        .map(|(orig_idx, meld)| {
+            let tile_destinations: Vec<Option<usize>> = meld
+                .tiles
+                .iter()
+                .map(|tile| {
+                    // Find where this tile ended up
+                    assignments
+                        .iter()
+                        .find(|a| {
+                            a.tile == *tile && matches!(a.source, TileSource::TableMeld(i) if i == *orig_idx)
+                        })
+                        .map(|a| a.dest_meld_idx)
+                })
+                .collect();
+
+            MeldFate {
+                original_idx: *orig_idx,
+                original: meld.clone(),
+                tile_destinations,
+            }
+        })
+        .collect()
+}
+
+/// Generate human-readable moves from the analyzed data
+fn generate_human_moves(
+    picked_melds: &[(usize, Meld)],
+    _laid_down_melds: &[Meld],
+    meld_origins: &[MeldOrigin],
+    meld_fates: &[MeldFate],
+    _original_hand: &Hand,
+) -> Vec<HumanMove> {
+    let mut human_moves = Vec::new();
+    let mut processed_new_melds = HashSet::new();
+    let mut processed_old_melds = HashSet::new();
+
+    // First pass: detect PlayFromHand (melds entirely from hand)
+    for origin in meld_origins {
+        if origin.tile_sources.iter().all(|s| matches!(s, TileSource::Hand)) {
+            human_moves.push(HumanMove::PlayFromHand(origin.new_meld.clone()));
+            processed_new_melds.insert(origin.new_idx);
+        }
+    }
+
+    // Second pass: detect ExtendMeld (original meld + hand tiles = new meld)
+    for fate in meld_fates {
+        if processed_old_melds.contains(&fate.original_idx) {
+            continue;
+        }
+
+        // Check if all tiles went to the same new meld
+        let destinations: HashSet<usize> = fate
+            .tile_destinations
+            .iter()
+            .filter_map(|d| *d)
+            .collect();
+
+        if destinations.len() == 1 {
+            let dest_idx = *destinations.iter().next().unwrap();
+            if processed_new_melds.contains(&dest_idx) {
+                continue;
+            }
+
+            let origin = &meld_origins[dest_idx];
+
+            // Check if the new meld has additional tiles from hand
+            let hand_tiles: Vec<Tile> = origin
+                .new_meld
+                .tiles
+                .iter()
+                .zip(origin.tile_sources.iter())
+                .filter_map(|(tile, src)| {
+                    if matches!(src, TileSource::Hand) {
+                        Some(*tile)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if !hand_tiles.is_empty() && origin.new_meld.tiles.len() > fate.original.tiles.len() {
+                // This is an ExtendMeld
+                human_moves.push(HumanMove::ExtendMeld {
+                    original: fate.original.clone(),
+                    added_tiles: hand_tiles,
+                    result: origin.new_meld.clone(),
+                });
+                processed_new_melds.insert(dest_idx);
+                processed_old_melds.insert(fate.original_idx);
+            } else if hand_tiles.is_empty() && meld_tiles_equal(&fate.original, &origin.new_meld) {
+                // Unchanged meld - skip it
+                processed_new_melds.insert(dest_idx);
+                processed_old_melds.insert(fate.original_idx);
+            }
+        }
+    }
+
+    // Third pass: detect SplitMeld (one original becomes multiple new melds)
+    for fate in meld_fates {
+        if processed_old_melds.contains(&fate.original_idx) {
+            continue;
+        }
+
+        let destinations: HashSet<usize> = fate
+            .tile_destinations
+            .iter()
+            .filter_map(|d| *d)
+            .collect();
+
+        // If tiles went to multiple destinations and all destinations only have tiles from this source
+        if destinations.len() >= 2 {
+            let mut is_pure_split = true;
+            for &dest_idx in &destinations {
+                if processed_new_melds.contains(&dest_idx) {
+                    is_pure_split = false;
+                    break;
+                }
+                let origin = &meld_origins[dest_idx];
+                // Check if this new meld only has tiles from this original meld
+                for src in &origin.tile_sources {
+                    if let TileSource::TableMeld(idx) = src {
+                        if *idx != fate.original_idx {
+                            is_pure_split = false;
+                            break;
+                        }
+                    } else {
+                        is_pure_split = false;
+                        break;
+                    }
+                }
+            }
+
+            if is_pure_split {
+                let parts: Vec<Meld> = destinations
+                    .iter()
+                    .map(|&idx| meld_origins[idx].new_meld.clone())
+                    .collect();
+
+                human_moves.push(HumanMove::SplitMeld {
+                    original: fate.original.clone(),
+                    parts,
+                });
+
+                for dest_idx in destinations {
+                    processed_new_melds.insert(dest_idx);
+                }
+                processed_old_melds.insert(fate.original_idx);
+            }
+        }
+    }
+
+    // Fourth pass: detect JoinMelds (multiple originals become one new meld)
+    for origin in meld_origins {
+        if processed_new_melds.contains(&origin.new_idx) {
+            continue;
+        }
+
+        // Find all unique table sources for this meld
+        let table_sources: HashSet<usize> = origin
+            .tile_sources
+            .iter()
+            .filter_map(|s| {
+                if let TileSource::TableMeld(idx) = s {
+                    Some(*idx)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // If multiple table sources and no hand tiles, this is a JoinMelds
+        if table_sources.len() >= 2 {
+            let has_hand_tiles = origin.tile_sources.iter().any(|s| matches!(s, TileSource::Hand));
+
+            if !has_hand_tiles {
+                // Check all sources are unprocessed
+                if table_sources.iter().all(|idx| !processed_old_melds.contains(idx)) {
+                    let sources: Vec<Meld> = table_sources
+                        .iter()
+                        .filter_map(|idx| {
+                            picked_melds.iter().find(|(i, _)| i == idx).map(|(_, m)| m.clone())
+                        })
+                        .collect();
+
+                    human_moves.push(HumanMove::JoinMelds {
+                        sources,
+                        result: origin.new_meld.clone(),
+                    });
+
+                    processed_new_melds.insert(origin.new_idx);
+                    for idx in table_sources {
+                        processed_old_melds.insert(idx);
+                    }
+                }
+            }
+        }
+    }
+
+    // Fifth pass: detect SwapWild
+    for fate in meld_fates {
+        if processed_old_melds.contains(&fate.original_idx) {
+            continue;
+        }
+
+        // Check if original has wilds and a new meld has the same tiles but with wilds replaced
+        let wild_positions: Vec<usize> = fate
+            .original
+            .tiles
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.is_wild())
+            .map(|(i, _)| i)
+            .collect();
+
+        if wild_positions.is_empty() {
+            continue;
+        }
+
+        // Find the destination meld
+        let destinations: HashSet<usize> = fate
+            .tile_destinations
+            .iter()
+            .filter_map(|d| *d)
+            .collect();
+
+        if destinations.len() == 1 {
+            let dest_idx = *destinations.iter().next().unwrap();
+            if processed_new_melds.contains(&dest_idx) {
+                continue;
+            }
+
+            let origin = &meld_origins[dest_idx];
+
+            // Check if the new meld has the same structure but with wilds replaced
+            if origin.new_meld.tiles.len() == fate.original.tiles.len() {
+                let mut swaps = Vec::new();
+                let mut is_swap = true;
+
+                for pos in &wild_positions {
+                    // Check if the tile at this position is now from hand
+                    if *pos < origin.tile_sources.len() {
+                        if matches!(origin.tile_sources[*pos], TileSource::Hand) {
+                            let replacement = origin.new_meld.tiles[*pos];
+                            let wild = Tile::wild();
+                            swaps.push((replacement, wild));
+                        } else {
+                            is_swap = false;
+                            break;
+                        }
+                    }
+                }
+
+                if is_swap && !swaps.is_empty() {
+                    human_moves.push(HumanMove::SwapWild {
+                        original: fate.original.clone(),
+                        swaps,
+                        result: origin.new_meld.clone(),
+                    });
+                    processed_new_melds.insert(dest_idx);
+                    processed_old_melds.insert(fate.original_idx);
+                }
+            }
+        }
+    }
+
+    // Final pass: anything remaining becomes a Rearrange
+    let unprocessed_old: Vec<Meld> = meld_fates
+        .iter()
+        .filter(|f| !processed_old_melds.contains(&f.original_idx))
+        .map(|f| f.original.clone())
+        .collect();
+
+    let unprocessed_new: Vec<Meld> = meld_origins
+        .iter()
+        .filter(|o| !processed_new_melds.contains(&o.new_idx))
+        .map(|o| o.new_meld.clone())
+        .collect();
+
+    if !unprocessed_new.is_empty() {
+        // Collect hand tiles used in unprocessed new melds
+        let hand_tiles_used: Vec<Tile> = meld_origins
+            .iter()
+            .filter(|o| !processed_new_melds.contains(&o.new_idx))
+            .flat_map(|o| {
+                o.new_meld
+                    .tiles
+                    .iter()
+                    .zip(o.tile_sources.iter())
+                    .filter_map(|(tile, src)| {
+                        if matches!(src, TileSource::Hand) {
+                            Some(*tile)
+                        } else {
+                            None
+                        }
+                    })
+            })
+            .collect();
+
+        human_moves.push(HumanMove::Rearrange {
+            consumed: unprocessed_old,
+            produced: unprocessed_new,
+            hand_tiles_used,
+        });
+    }
+
+    human_moves
+}
+
+/// Check if two melds have the same tiles (in the same order)
+fn meld_tiles_equal(a: &Meld, b: &Meld) -> bool {
+    if a.tiles.len() != b.tiles.len() {
+        return false;
+    }
+    a.tiles.iter().zip(b.tiles.iter()).all(|(t1, t2)| t1 == t2)
+}
 
 #[cfg(test)]
 mod tests {
@@ -1414,5 +1954,259 @@ mod tests {
         // Verify state is preserved
         assert_eq!(table, original_table);
         assert_eq!(hand, original_hand);
+    }
+
+    // ========================================================================
+    // Human Move Translation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_translate_play_from_hand() {
+        // Playing tiles entirely from hand should produce PlayFromHand
+        let table = Table::new();
+        let mut hand = Hand::new();
+        hand.add(Tile::new(0, 1)); // Red 1
+        hand.add(Tile::new(0, 2)); // Red 2
+        hand.add(Tile::new(0, 3)); // Red 3
+
+        let mut laid_tiles = VecDeque::new();
+        laid_tiles.push_back(Tile::new(0, 1));
+        laid_tiles.push_back(Tile::new(0, 2));
+        laid_tiles.push_back(Tile::new(0, 3));
+        let meld = Meld::new(MeldType::Run, laid_tiles);
+
+        let solver_moves = vec![SolverMove::LayDown(meld.clone())];
+
+        let human_moves = translate_to_human_moves(&table, &hand, &solver_moves);
+
+        assert_eq!(human_moves.len(), 1);
+        match &human_moves[0] {
+            HumanMove::PlayFromHand(m) => {
+                assert_eq!(m.tiles.len(), 3);
+            }
+            _ => panic!("Expected PlayFromHand, got {:?}", human_moves[0]),
+        }
+    }
+
+    #[test]
+    fn test_translate_extend_meld() {
+        // Picking up a meld and laying down a longer version should produce ExtendMeld
+        let mut table = Table::new();
+        let mut original_tiles = VecDeque::new();
+        original_tiles.push_back(Tile::new(0, 1));
+        original_tiles.push_back(Tile::new(0, 2));
+        original_tiles.push_back(Tile::new(0, 3));
+        let original_meld = Meld::new(MeldType::Run, original_tiles);
+        table.add_meld(original_meld.clone());
+
+        let mut hand = Hand::new();
+        hand.add(Tile::new(0, 4)); // Red 4
+
+        // Extended meld: [1, 2, 3, 4]
+        let mut extended_tiles = VecDeque::new();
+        extended_tiles.push_back(Tile::new(0, 1));
+        extended_tiles.push_back(Tile::new(0, 2));
+        extended_tiles.push_back(Tile::new(0, 3));
+        extended_tiles.push_back(Tile::new(0, 4));
+        let extended_meld = Meld::new(MeldType::Run, extended_tiles);
+
+        let solver_moves = vec![
+            SolverMove::PickUp(0),
+            SolverMove::LayDown(extended_meld.clone()),
+        ];
+
+        let human_moves = translate_to_human_moves(&table, &hand, &solver_moves);
+
+        assert_eq!(human_moves.len(), 1);
+        match &human_moves[0] {
+            HumanMove::ExtendMeld {
+                original,
+                added_tiles,
+                result,
+            } => {
+                assert_eq!(original.tiles.len(), 3);
+                assert_eq!(added_tiles.len(), 1);
+                assert_eq!(added_tiles[0], Tile::new(0, 4));
+                assert_eq!(result.tiles.len(), 4);
+            }
+            _ => panic!("Expected ExtendMeld, got {:?}", human_moves[0]),
+        }
+    }
+
+    #[test]
+    fn test_translate_split_meld() {
+        // Picking up a long meld and splitting it should produce SplitMeld
+        let mut table = Table::new();
+        let mut original_tiles = VecDeque::new();
+        for i in 1..=6 {
+            original_tiles.push_back(Tile::new(0, i));
+        }
+        let original_meld = Meld::new(MeldType::Run, original_tiles);
+        table.add_meld(original_meld.clone());
+
+        let hand = Hand::new(); // No tiles in hand
+
+        // Split into [1,2,3] and [4,5,6]
+        let mut part1_tiles = VecDeque::new();
+        for i in 1..=3 {
+            part1_tiles.push_back(Tile::new(0, i));
+        }
+        let part1 = Meld::new(MeldType::Run, part1_tiles);
+
+        let mut part2_tiles = VecDeque::new();
+        for i in 4..=6 {
+            part2_tiles.push_back(Tile::new(0, i));
+        }
+        let part2 = Meld::new(MeldType::Run, part2_tiles);
+
+        let solver_moves = vec![
+            SolverMove::PickUp(0),
+            SolverMove::LayDown(part1.clone()),
+            SolverMove::LayDown(part2.clone()),
+        ];
+
+        let human_moves = translate_to_human_moves(&table, &hand, &solver_moves);
+
+        assert_eq!(human_moves.len(), 1);
+        match &human_moves[0] {
+            HumanMove::SplitMeld { original, parts } => {
+                assert_eq!(original.tiles.len(), 6);
+                assert_eq!(parts.len(), 2);
+            }
+            _ => panic!("Expected SplitMeld, got {:?}", human_moves[0]),
+        }
+    }
+
+    #[test]
+    fn test_translate_join_melds() {
+        // Picking up two melds and combining them should produce JoinMelds
+        let mut table = Table::new();
+
+        // First meld: Red 1,2,3
+        let mut meld1_tiles = VecDeque::new();
+        for i in 1..=3 {
+            meld1_tiles.push_back(Tile::new(0, i));
+        }
+        table.add_meld(Meld::new(MeldType::Run, meld1_tiles));
+
+        // Second meld: Red 4,5,6
+        let mut meld2_tiles = VecDeque::new();
+        for i in 4..=6 {
+            meld2_tiles.push_back(Tile::new(0, i));
+        }
+        table.add_meld(Meld::new(MeldType::Run, meld2_tiles));
+
+        let hand = Hand::new(); // No tiles in hand
+
+        // Combine into [1,2,3,4,5,6]
+        let mut combined_tiles = VecDeque::new();
+        for i in 1..=6 {
+            combined_tiles.push_back(Tile::new(0, i));
+        }
+        let combined = Meld::new(MeldType::Run, combined_tiles);
+
+        let solver_moves = vec![
+            SolverMove::PickUp(0),
+            SolverMove::PickUp(1),
+            SolverMove::LayDown(combined.clone()),
+        ];
+
+        let human_moves = translate_to_human_moves(&table, &hand, &solver_moves);
+
+        assert_eq!(human_moves.len(), 1);
+        match &human_moves[0] {
+            HumanMove::JoinMelds { sources, result } => {
+                assert_eq!(sources.len(), 2);
+                assert_eq!(result.tiles.len(), 6);
+            }
+            _ => panic!("Expected JoinMelds, got {:?}", human_moves[0]),
+        }
+    }
+
+    #[test]
+    fn test_translate_rearrange_fallback() {
+        // Complex rearrangement that doesn't fit other patterns
+        let mut table = Table::new();
+
+        // Original meld: Red 1,2,3,4,5
+        let mut original_tiles = VecDeque::new();
+        for i in 1..=5 {
+            original_tiles.push_back(Tile::new(0, i));
+        }
+        table.add_meld(Meld::new(MeldType::Run, original_tiles));
+
+        let mut hand = Hand::new();
+        hand.add(Tile::new(1, 3)); // Blue 3
+        hand.add(Tile::new(2, 3)); // Yellow 3
+
+        // Rearrange into:
+        // - Run: Red 1, 2
+        // - Group: Red 3, Blue 3, Yellow 3
+        // - Run: Red 4, 5
+
+        // But runs need 3 tiles, so this isn't valid
+        // Let's make a valid scenario
+
+        // Clear and redo: Original meld: Red 1,2,3,4,5,6
+        let mut table = Table::new();
+        let mut original_tiles = VecDeque::new();
+        for i in 1..=6 {
+            original_tiles.push_back(Tile::new(0, i));
+        }
+        table.add_meld(Meld::new(MeldType::Run, original_tiles));
+
+        // Rearrange into:
+        // - Run: Red 1, 2, 3
+        // - Group: Red 4, Blue 4, Yellow 4
+        // - Run: Red 5, 6 (invalid, needs 3 tiles)
+
+        // Let's use a simpler scenario that requires rearrange
+        let mut hand = Hand::new();
+        hand.add(Tile::new(1, 4)); // Blue 4
+        hand.add(Tile::new(2, 4)); // Yellow 4
+
+        let mut run1_tiles = VecDeque::new();
+        for i in 1..=3 {
+            run1_tiles.push_back(Tile::new(0, i));
+        }
+        let run1 = Meld::new(MeldType::Run, run1_tiles);
+
+        let mut group_tiles = VecDeque::new();
+        group_tiles.push_back(Tile::new(0, 4));
+        group_tiles.push_back(Tile::new(1, 4));
+        group_tiles.push_back(Tile::new(2, 4));
+        let group = Meld::new(MeldType::Group, group_tiles);
+
+        let mut run2_tiles = VecDeque::new();
+        run2_tiles.push_back(Tile::new(0, 5));
+        run2_tiles.push_back(Tile::new(0, 6));
+        // Need one more - let's add a tile
+        hand.add(Tile::new(0, 7));
+        run2_tiles.push_back(Tile::new(0, 7));
+        let run2 = Meld::new(MeldType::Run, run2_tiles);
+
+        let solver_moves = vec![
+            SolverMove::PickUp(0),
+            SolverMove::LayDown(run1),
+            SolverMove::LayDown(group),
+            SolverMove::LayDown(run2),
+        ];
+
+        let human_moves = translate_to_human_moves(&table, &hand, &solver_moves);
+
+        // Should produce some combination of moves
+        // The exact pattern depends on analysis, but we should get something
+        assert!(!human_moves.is_empty(), "Should produce at least one human move");
+    }
+
+    #[test]
+    fn test_translate_empty_moves() {
+        let table = Table::new();
+        let hand = Hand::new();
+        let solver_moves: Vec<SolverMove> = vec![];
+
+        let human_moves = translate_to_human_moves(&table, &hand, &solver_moves);
+
+        assert!(human_moves.is_empty());
     }
 }
