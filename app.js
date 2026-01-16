@@ -707,6 +707,10 @@ function updateTableDisplay() {
         const meldDiv = document.createElement('div');
         meldDiv.className = 'table-meld';
 
+        const numberSpan = document.createElement('span');
+        numberSpan.className = 'meld-number';
+        numberSpan.textContent = `${index + 1}.`;
+
         const badge = document.createElement('span');
         badge.className = 'meld-type-badge';
         badge.textContent = meld.type;
@@ -726,6 +730,7 @@ function updateTableDisplay() {
         removeBtn.textContent = 'Remove';
         removeBtn.onclick = () => removeMeldFromTable(index);
 
+        meldDiv.appendChild(numberSpan);
         meldDiv.appendChild(badge);
         meldDiv.appendChild(tilesDiv);
         meldDiv.appendChild(removeBtn);

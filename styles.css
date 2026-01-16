@@ -342,6 +342,12 @@ header {
     font-weight: 600;
 }
 
+.meld-number {
+    font-weight: 700;
+    color: var(--color-text-secondary);
+    min-width: 24px;
+}
+
 .meld-tiles {
     display: flex;
     gap: 6px;
