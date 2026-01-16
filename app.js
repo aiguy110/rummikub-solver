@@ -1,3 +1,47 @@
+// Console log capturing - must be at the very top
+const capturedLogs = [];
+const MAX_LOGS = 500;
+
+const originalConsoleLog = console.log;
+const originalConsoleError = console.error;
+const originalConsoleWarn = console.warn;
+
+function captureLog(level, source, args) {
+    const message = args.map(arg =>
+        typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
+    ).join(' ');
+
+    capturedLogs.push({
+        level,
+        source,
+        message,
+        timestamp: new Date()
+    });
+
+    // Limit log size
+    if (capturedLogs.length > MAX_LOGS) {
+        capturedLogs.shift();
+    }
+
+    // Update display if logs modal is open
+    updateLogsDisplay();
+}
+
+console.log = function(...args) {
+    originalConsoleLog.apply(console, args);
+    captureLog('log', 'main', args);
+};
+
+console.error = function(...args) {
+    originalConsoleError.apply(console, args);
+    captureLog('error', 'main', args);
+};
+
+console.warn = function(...args) {
+    originalConsoleWarn.apply(console, args);
+    captureLog('warn', 'main', args);
+};
+
 // State management
 let hand = new Map(); // tile -> count
 let table = []; // array of meld objects
@@ -53,7 +97,7 @@ function initWorker() {
         solverWorker = new Worker('./solver-worker.js', { type: 'module' });
 
         solverWorker.onmessage = function(e) {
-            const { type, result, error } = e.data;
+            const { type, result, error, level, message } = e.data;
 
             if (type === 'ready') {
                 solverWorkerReady = true;
@@ -62,6 +106,18 @@ function initWorker() {
                 handleSolverResult(result);
             } else if (type === 'error') {
                 handleSolverError(error);
+            } else if (type === 'log') {
+                // Capture log from worker
+                capturedLogs.push({
+                    level: level || 'log',
+                    source: 'worker',
+                    message: message,
+                    timestamp: new Date()
+                });
+                if (capturedLogs.length > MAX_LOGS) {
+                    capturedLogs.shift();
+                }
+                updateLogsDisplay();
             }
         };
 
@@ -1223,6 +1279,72 @@ function closeSettingsModal() {
     document.getElementById('settings-modal').style.display = 'none';
 }
 
+// Menu Management
+let menuOpen = false;
+
+function toggleMenu() {
+    const dropdown = document.getElementById('menu-dropdown');
+    menuOpen = !menuOpen;
+    dropdown.style.display = menuOpen ? 'block' : 'none';
+}
+
+function closeMenu() {
+    const dropdown = document.getElementById('menu-dropdown');
+    menuOpen = false;
+    dropdown.style.display = 'none';
+}
+
+// Logs Modal Management
+function openLogsModal() {
+    closeMenu();
+    updateLogsDisplay();
+    document.getElementById('logs-modal').style.display = 'flex';
+}
+
+function closeLogsModal() {
+    document.getElementById('logs-modal').style.display = 'none';
+}
+
+function clearLogs() {
+    capturedLogs.length = 0;
+    updateLogsDisplay();
+}
+
+function updateLogsDisplay() {
+    const container = document.getElementById('logs-container');
+    if (!container) return;
+
+    // Only update if modal is visible
+    const modal = document.getElementById('logs-modal');
+    if (!modal || modal.style.display === 'none') return;
+
+    if (capturedLogs.length === 0) {
+        container.innerHTML = '<p class="empty-message">No logs yet</p>';
+        return;
+    }
+
+    container.innerHTML = '';
+    capturedLogs.forEach(log => {
+        const entry = document.createElement('div');
+        entry.className = `log-entry ${log.level}`;
+
+        const time = log.timestamp.toLocaleTimeString();
+        const sourceLabel = log.source === 'worker' ? '[Worker]' : '[Main]';
+
+        entry.innerHTML = `<span class="log-time">${time}</span><span class="log-source">${sourceLabel}</span>${escapeHtml(log.message)}`;
+        container.appendChild(entry);
+    });
+
+    // Auto-scroll to bottom
+    container.scrollTop = container.scrollHeight;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 // Image Capture and Processing
 function captureImageFromCamera(mode) {
     currentImageMode = mode;
@@ -1582,11 +1704,35 @@ function attachEventListeners() {
     document.getElementById('clear-hand-btn').addEventListener('click', clearHand);
     document.getElementById('clear-table-btn').addEventListener('click', clearTable);
 
+    // Menu
+    document.getElementById('menu-btn').addEventListener('click', toggleMenu);
+    document.getElementById('menu-settings').addEventListener('click', () => {
+        closeMenu();
+        openSettingsModal();
+    });
+    document.getElementById('menu-logs').addEventListener('click', openLogsModal);
+
+    // Close menu when clicking outside
+    document.addEventListener('click', (e) => {
+        const menuContainer = document.getElementById('menu-btn').parentElement;
+        if (menuOpen && !menuContainer.contains(e.target)) {
+            closeMenu();
+        }
+    });
+
     // Settings modal
-    document.getElementById('settings-btn').addEventListener('click', openSettingsModal);
     document.getElementById('close-settings-btn').addEventListener('click', closeSettingsModal);
     document.getElementById('save-api-key-btn').addEventListener('click', saveApiKey);
     document.getElementById('restore-defaults-btn').addEventListener('click', restoreDefaultPrompts);
+
+    // Logs modal
+    document.getElementById('close-logs-btn').addEventListener('click', closeLogsModal);
+    document.getElementById('clear-logs-btn').addEventListener('click', clearLogs);
+    document.getElementById('logs-modal').addEventListener('click', (e) => {
+        if (e.target.id === 'logs-modal') {
+            closeLogsModal();
+        }
+    });
 
     // Image capture
     document.getElementById('camera-hand-btn').addEventListener('click', () => captureImageFromCamera('hand'));

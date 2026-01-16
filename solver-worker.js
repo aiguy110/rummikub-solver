@@ -1,6 +1,33 @@
 // Web Worker for running the Rummikub solver in a background thread
 // This prevents blocking the main UI thread during computation
 
+// Hook console to forward logs to main thread
+const originalConsoleLog = console.log;
+const originalConsoleError = console.error;
+const originalConsoleWarn = console.warn;
+
+function forwardLog(level, args) {
+    const message = args.map(arg =>
+        typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
+    ).join(' ');
+    self.postMessage({ type: 'log', level, message });
+}
+
+console.log = function(...args) {
+    originalConsoleLog.apply(console, args);
+    forwardLog('log', args);
+};
+
+console.error = function(...args) {
+    originalConsoleError.apply(console, args);
+    forwardLog('error', args);
+};
+
+console.warn = function(...args) {
+    originalConsoleWarn.apply(console, args);
+    forwardLog('warn', args);
+};
+
 let wasmModule = null;
 
 // Initialize WASM module in the worker

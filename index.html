@@ -11,7 +11,15 @@
         <header>
             <h1>🎲 Rummikub Solver</h1>
             <p class="subtitle">Find the best moves for your hand</p>
-            <button id="settings-btn" class="settings-btn" title="Settings">⚙️</button>
+            <div class="menu-container">
+                <button id="menu-btn" class="menu-btn" title="Menu">
+                    <span class="hamburger-icon"></span>
+                </button>
+                <div id="menu-dropdown" class="menu-dropdown" style="display: none;">
+                    <button id="menu-settings" class="menu-item">Settings</button>
+                    <button id="menu-logs" class="menu-item">Logs</button>
+                </div>
+            </div>
         </header>
 
         <!-- Settings Modal -->
@@ -42,6 +50,22 @@
                     <button id="save-api-key-btn" class="btn btn-primary">Save Settings</button>
                     <button id="restore-defaults-btn" class="btn btn-secondary">Restore Defaults</button>
                     <button id="close-settings-btn" class="btn btn-secondary">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Logs Modal -->
+        <div id="logs-modal" class="dialog" style="display: none;">
+            <div class="dialog-content logs-dialog">
+                <div class="logs-header">
+                    <h3>Console Logs</h3>
+                    <button id="clear-logs-btn" class="btn btn-secondary btn-small">Clear</button>
+                </div>
+                <div id="logs-container" class="logs-container">
+                    <p class="empty-message">No logs yet</p>
+                </div>
+                <div class="logs-actions">
+                    <button id="close-logs-btn" class="btn btn-secondary">Close</button>
                 </div>
             </div>
         </div>
