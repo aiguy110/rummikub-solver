@@ -1567,6 +1567,12 @@ function clearHand() {
     updateTileCounts();
 }
 
+// Clear table
+function clearTable() {
+    table = [];
+    updateTableDisplay();
+}
+
 // Attach event listeners
 function attachEventListeners() {
     // Existing listeners
@@ -1574,6 +1580,7 @@ function attachEventListeners() {
     document.getElementById('solve-btn').addEventListener('click', solve);
     document.getElementById('save-btn').addEventListener('click', saveState);
     document.getElementById('clear-hand-btn').addEventListener('click', clearHand);
+    document.getElementById('clear-table-btn').addEventListener('click', clearTable);
 
     // Settings modal
     document.getElementById('settings-btn').addEventListener('click', openSettingsModal);
