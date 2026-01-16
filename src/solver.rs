@@ -53,6 +53,24 @@ pub enum ScoringStrategy {
     MinimizePoints,
 }
 
+/// What tile a wild represents in a meld
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RepresentedTile {
+    /// A specific tile (deterministic: runs, groups of 4)
+    Concrete(Tile),
+    /// Either of two tiles (ambiguous: groups of 3)
+    EitherOf(Tile, Tile),
+}
+
+/// Tracks wild replacement obligations when picking up melds from the table
+#[derive(Debug, Clone, Default)]
+struct WildDebt {
+    /// Tiles that MUST be played (from runs and groups of 4)
+    concrete: HashMap<Tile, u8>,
+    /// Play at least one of the pair (from groups of 3)
+    either_or: Vec<(Tile, Tile)>,
+}
+
 /// Detailed result from the solver including metadata about the search
 #[derive(Debug, Clone)]
 pub struct SolverResult {
@@ -308,8 +326,10 @@ where
     let table_size = table.len();
 
     // Depth 0 means direct play from hand (no table manipulation)
+    // No wild debt since we're not picking up any melds
     if depth == 0 {
-        if let Some(melds) = find_best_melds(hand, quality, original_hand, timer) {
+        let empty_debt = WildDebt::default();
+        if let Some(melds) = find_best_melds(hand, quality, original_hand, timer, &empty_debt) {
             let moves: Vec<SolverMove> = melds
                 .iter()
                 .map(|meld| SolverMove::LayDown(meld.clone()))
@@ -387,8 +407,12 @@ where
         }
     }
 
+    // Compute wild debts from the removed melds
+    // Any wilds in these melds require replacement tiles to be played
+    let wild_debt = compute_wild_debts(&removed_melds);
+
     // Try to find melds from the new hand
-    if let Some(melds) = find_best_melds(hand, quality, original_hand, timer) {
+    if let Some(melds) = find_best_melds(hand, quality, original_hand, timer, &wild_debt) {
         // Build the move sequence
         let mut moves = Vec::new();
 
@@ -469,11 +493,15 @@ fn next_combination(combo: &mut [usize], n: usize) -> bool {
 /// according to the quality function. The remaining hand must "beat" the
 /// hand_to_beat by having strictly fewer tiles of at least one type, and
 /// not having any tile types that hand_to_beat doesn't have.
+///
+/// The wild_debt parameter specifies tiles that MUST be played in the melds
+/// to satisfy wild replacement constraints from picked-up table melds.
 fn find_best_melds<F>(
     hand: &mut Hand,
     quality: F,
     hand_to_beat: &Hand,
     timer: &TimeTracker,
+    wild_debt: &WildDebt,
 ) -> Option<Vec<Meld>>
 where
     F: Fn(&Hand) -> i32,
@@ -502,6 +530,7 @@ where
         &quality,
         hand_to_beat,
         timer,
+        wild_debt,
         &mut best,
     );
 
@@ -755,6 +784,7 @@ fn explore<F>(
     quality: &F,
     hand_to_beat: &Hand,
     timer: &TimeTracker,
+    wild_debt: &WildDebt,
     best: &mut Option<(Vec<usize>, i32)>,
 ) where
     F: Fn(&Hand) -> i32,
@@ -766,7 +796,15 @@ fn explore<F>(
 
     // Terminal check or early termination
     if current_index >= all_possible_melds.len() {
-        evaluate_terminal_state(remaining_tiles, active_melds, quality, hand_to_beat, best);
+        evaluate_terminal_state(
+            remaining_tiles,
+            active_melds,
+            all_possible_melds,
+            quality,
+            hand_to_beat,
+            wild_debt,
+            best,
+        );
         return;
     }
 
@@ -781,6 +819,7 @@ fn explore<F>(
         quality,
         hand_to_beat,
         timer,
+        wild_debt,
         best,
     );
 
@@ -811,6 +850,7 @@ fn explore<F>(
             quality,
             hand_to_beat,
             timer,
+            wild_debt,
             best,
         );
 
@@ -894,20 +934,37 @@ fn unmark_invalid_melds(newly_invalid: &[usize], invalid_melds: &mut HashSet<usi
 }
 
 /// Evaluate a terminal state and potentially update the best solution
+#[allow(clippy::too_many_arguments)]
 fn evaluate_terminal_state<F>(
     remaining_hand: &Hand,
     active_melds: &[usize],
+    all_possible_melds: &[Meld],
     quality: &F,
     hand_to_beat: &Hand,
+    wild_debt: &WildDebt,
     best: &mut Option<(Vec<usize>, i32)>,
 ) where
     F: Fn(&Hand) -> i32,
 {
-    if beats(remaining_hand, hand_to_beat) {
-        let score = quality(remaining_hand);
-        if best.as_ref().map_or(true, |(_, best_score)| score > *best_score) {
-            *best = Some((active_melds.to_vec(), score));
-        }
+    // First check if this beats the hand to beat
+    if !beats(remaining_hand, hand_to_beat) {
+        return;
+    }
+
+    // Check if wild debt is satisfied by the played melds
+    let played_melds: Vec<Meld> = active_melds
+        .iter()
+        .map(|&i| all_possible_melds[i].clone())
+        .collect();
+
+    if !is_wild_debt_satisfied(wild_debt, &played_melds) {
+        return;
+    }
+
+    // This is a valid solution - check if it's the best
+    let score = quality(remaining_hand);
+    if best.as_ref().map_or(true, |(_, best_score)| score > *best_score) {
+        *best = Some((active_melds.to_vec(), score));
     }
 }
 
@@ -942,6 +999,139 @@ fn beats(terminal: &Hand, baseline: &Hand) -> bool {
     }
 
     has_strict_improvement
+}
+
+// ============================================================================
+// Wild Debt Computation
+// ============================================================================
+
+/// Compute what tile a wild represents at a given position in a meld.
+///
+/// For runs: the wild's position determines its number.
+/// For groups of 4: the wild represents the one missing color.
+/// For groups of 3: the wild could be either of two missing colors (EitherOf).
+fn compute_represented_tile(meld: &Meld, wild_position: usize) -> Option<RepresentedTile> {
+    match meld.meld_type {
+        MeldType::Run => {
+            // Find the color from any non-wild tile
+            let color = meld.tiles.iter().find_map(|t| t.color())?;
+
+            // Find the starting number by looking at non-wild tiles
+            // For each non-wild tile, we can compute: start = tile.number - position
+            let start = meld.tiles.iter().enumerate().find_map(|(i, t)| {
+                t.number().map(|n| n as i32 - i as i32)
+            })?;
+
+            // The wild at position `wild_position` represents start + wild_position
+            let represented_number = (start + wild_position as i32) as u8;
+            if represented_number >= 1 && represented_number <= 13 {
+                Some(RepresentedTile::Concrete(Tile::new(color, represented_number)))
+            } else {
+                None
+            }
+        }
+        MeldType::Group => {
+            // Find the number from any non-wild tile
+            let number = meld.tiles.iter().find_map(|t| t.number())?;
+
+            // Find which colors are present (non-wild tiles)
+            let colors_present: Vec<u8> = meld.tiles.iter()
+                .filter_map(|t| t.color())
+                .collect();
+
+            // Find missing colors (0-3)
+            let missing_colors: Vec<u8> = (0..4)
+                .filter(|c| !colors_present.contains(c))
+                .collect();
+
+            match missing_colors.len() {
+                1 => {
+                    // Group of 4 with one wild: wild represents the one missing color
+                    Some(RepresentedTile::Concrete(Tile::new(missing_colors[0], number)))
+                }
+                2 => {
+                    // Group of 3 with one wild: wild could be either missing color
+                    Some(RepresentedTile::EitherOf(
+                        Tile::new(missing_colors[0], number),
+                        Tile::new(missing_colors[1], number),
+                    ))
+                }
+                _ => {
+                    // More than 2 missing colors means multiple wilds -
+                    // each wild could be any missing color, but we need to be consistent
+                    // For simplicity, return the first missing color
+                    if !missing_colors.is_empty() {
+                        Some(RepresentedTile::Concrete(Tile::new(missing_colors[0], number)))
+                    } else {
+                        None
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Compute wild debts from a list of picked-up melds.
+///
+/// For each wild in each picked meld, we determine what tile it represents
+/// and add it to the debt structure.
+fn compute_wild_debts(picked_melds: &[(usize, Meld)]) -> WildDebt {
+    let mut debt = WildDebt::default();
+
+    for (_, meld) in picked_melds {
+        for (pos, tile) in meld.tiles.iter().enumerate() {
+            if tile.is_wild() {
+                if let Some(represented) = compute_represented_tile(meld, pos) {
+                    match represented {
+                        RepresentedTile::Concrete(t) => {
+                            *debt.concrete.entry(t).or_insert(0) += 1;
+                        }
+                        RepresentedTile::EitherOf(t1, t2) => {
+                            debt.either_or.push((t1, t2));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    debt
+}
+
+/// Check if the wild debt is satisfied by the tiles played in the given melds.
+///
+/// Returns true if all debts are paid:
+/// - For concrete debts: the tile must appear in played melds at least debt_count times
+/// - For either-or debts: at least one of the two options must appear in played melds
+fn is_wild_debt_satisfied(debt: &WildDebt, played_melds: &[Meld]) -> bool {
+    // Count tiles played in all melds
+    let mut played_counts: HashMap<Tile, u8> = HashMap::new();
+    for meld in played_melds {
+        for tile in &meld.tiles {
+            if !tile.is_wild() {
+                *played_counts.entry(*tile).or_insert(0) += 1;
+            }
+        }
+    }
+
+    // Check concrete debts
+    for (tile, &required_count) in &debt.concrete {
+        let played = played_counts.get(tile).copied().unwrap_or(0);
+        if played < required_count {
+            return false;
+        }
+    }
+
+    // Check either-or debts
+    for (t1, t2) in &debt.either_or {
+        let played_t1 = played_counts.get(t1).copied().unwrap_or(0);
+        let played_t2 = played_counts.get(t2).copied().unwrap_or(0);
+        if played_t1 == 0 && played_t2 == 0 {
+            return false;
+        }
+    }
+
+    true
 }
 
 // ============================================================================
@@ -1557,7 +1747,8 @@ mod tests {
         };
 
         let timer = TimeTracker::new(1000);
-        let result = find_best_melds(&mut hand, quality, &hand_to_beat, &timer);
+        let empty_debt = WildDebt::default();
+        let result = find_best_melds(&mut hand, quality, &hand_to_beat, &timer, &empty_debt);
 
         // Should find a solution (play the run of 4)
         assert!(result.is_some());
@@ -1637,7 +1828,8 @@ mod tests {
         };
 
         let timer = TimeTracker::new(1000);
-        let _result = find_best_melds(&mut hand, quality, &hand_to_beat, &timer);
+        let empty_debt = WildDebt::default();
+        let _result = find_best_melds(&mut hand, quality, &hand_to_beat, &timer, &empty_debt);
 
         // Hand should be unchanged regardless of result
         assert_eq!(hand, original);
@@ -1661,7 +1853,8 @@ mod tests {
         };
 
         let timer = TimeTracker::new(1000);
-        let result = find_best_melds(&mut hand, quality, &hand_to_beat, &timer);
+        let empty_debt = WildDebt::default();
+        let result = find_best_melds(&mut hand, quality, &hand_to_beat, &timer, &empty_debt);
 
         // Hand should be unchanged even when no solution is found
         assert_eq!(hand, original);
@@ -1880,7 +2073,8 @@ mod tests {
             -total
         };
         let timer = TimeTracker::new(5000);
-        let depth0_result = find_best_melds(&mut hand, quality, &original_hand, &timer);
+        let empty_debt = WildDebt::default();
+        let depth0_result = find_best_melds(&mut hand, quality, &original_hand, &timer, &empty_debt);
         assert!(depth0_result.is_some(), "Depth 0 should find a solution");
         let depth0_melds = depth0_result.unwrap();
 
@@ -2208,5 +2402,242 @@ mod tests {
         let human_moves = translate_to_human_moves(&table, &hand, &solver_moves);
 
         assert!(human_moves.is_empty());
+    }
+
+    // ========================================================================
+    // Wild Debt Tests
+    // ========================================================================
+
+    #[test]
+    fn test_compute_represented_tile_run() {
+        // Run: [R1, Wild, R3] - wild at position 1 represents R2
+        let mut tiles = VecDeque::new();
+        tiles.push_back(Tile::new(0, 1)); // Red 1
+        tiles.push_back(Tile::wild());
+        tiles.push_back(Tile::new(0, 3)); // Red 3
+        let meld = Meld::new(MeldType::Run, tiles);
+
+        let represented = compute_represented_tile(&meld, 1);
+        assert_eq!(represented, Some(RepresentedTile::Concrete(Tile::new(0, 2))));
+    }
+
+    #[test]
+    fn test_compute_represented_tile_run_wild_at_start() {
+        // Run: [Wild, R2, R3] - wild at position 0 represents R1
+        let mut tiles = VecDeque::new();
+        tiles.push_back(Tile::wild());
+        tiles.push_back(Tile::new(0, 2)); // Red 2
+        tiles.push_back(Tile::new(0, 3)); // Red 3
+        let meld = Meld::new(MeldType::Run, tiles);
+
+        let represented = compute_represented_tile(&meld, 0);
+        assert_eq!(represented, Some(RepresentedTile::Concrete(Tile::new(0, 1))));
+    }
+
+    #[test]
+    fn test_compute_represented_tile_run_wild_at_end() {
+        // Run: [R1, R2, Wild] - wild at position 2 represents R3
+        let mut tiles = VecDeque::new();
+        tiles.push_back(Tile::new(0, 1)); // Red 1
+        tiles.push_back(Tile::new(0, 2)); // Red 2
+        tiles.push_back(Tile::wild());
+        let meld = Meld::new(MeldType::Run, tiles);
+
+        let represented = compute_represented_tile(&meld, 2);
+        assert_eq!(represented, Some(RepresentedTile::Concrete(Tile::new(0, 3))));
+    }
+
+    #[test]
+    fn test_compute_represented_tile_group_of_4() {
+        // Group of 4: [R5, B5, Y5, Wild] - wild represents K5 (the missing color)
+        let mut tiles = VecDeque::new();
+        tiles.push_back(Tile::new(0, 5)); // Red 5
+        tiles.push_back(Tile::new(1, 5)); // Blue 5
+        tiles.push_back(Tile::new(2, 5)); // Yellow 5
+        tiles.push_back(Tile::wild());
+        let meld = Meld::new(MeldType::Group, tiles);
+
+        let represented = compute_represented_tile(&meld, 3);
+        assert_eq!(represented, Some(RepresentedTile::Concrete(Tile::new(3, 5)))); // Black 5
+    }
+
+    #[test]
+    fn test_compute_represented_tile_group_of_3() {
+        // Group of 3: [R5, B5, Wild] - wild could be Y5 or K5
+        let mut tiles = VecDeque::new();
+        tiles.push_back(Tile::new(0, 5)); // Red 5
+        tiles.push_back(Tile::new(1, 5)); // Blue 5
+        tiles.push_back(Tile::wild());
+        let meld = Meld::new(MeldType::Group, tiles);
+
+        let represented = compute_represented_tile(&meld, 2);
+        match represented {
+            Some(RepresentedTile::EitherOf(t1, t2)) => {
+                // Should be Y5 and K5 (colors 2 and 3)
+                assert!(
+                    (t1 == Tile::new(2, 5) && t2 == Tile::new(3, 5)) ||
+                    (t1 == Tile::new(3, 5) && t2 == Tile::new(2, 5))
+                );
+            }
+            _ => panic!("Expected EitherOf for group of 3 with wild"),
+        }
+    }
+
+    #[test]
+    fn test_compute_wild_debts_single_run() {
+        // Single run with wild: [R1, Wild, R3]
+        let mut tiles = VecDeque::new();
+        tiles.push_back(Tile::new(0, 1));
+        tiles.push_back(Tile::wild());
+        tiles.push_back(Tile::new(0, 3));
+        let meld = Meld::new(MeldType::Run, tiles);
+
+        let picked_melds = vec![(0, meld)];
+        let debt = compute_wild_debts(&picked_melds);
+
+        assert_eq!(debt.concrete.get(&Tile::new(0, 2)), Some(&1)); // R2 is owed
+        assert!(debt.either_or.is_empty());
+    }
+
+    #[test]
+    fn test_compute_wild_debts_group_of_3() {
+        // Group of 3 with wild: [R5, B5, Wild]
+        let mut tiles = VecDeque::new();
+        tiles.push_back(Tile::new(0, 5));
+        tiles.push_back(Tile::new(1, 5));
+        tiles.push_back(Tile::wild());
+        let meld = Meld::new(MeldType::Group, tiles);
+
+        let picked_melds = vec![(0, meld)];
+        let debt = compute_wild_debts(&picked_melds);
+
+        assert!(debt.concrete.is_empty());
+        assert_eq!(debt.either_or.len(), 1);
+        let (t1, t2) = &debt.either_or[0];
+        // Either Y5 or K5
+        assert!(
+            (*t1 == Tile::new(2, 5) && *t2 == Tile::new(3, 5)) ||
+            (*t1 == Tile::new(3, 5) && *t2 == Tile::new(2, 5))
+        );
+    }
+
+    #[test]
+    fn test_is_wild_debt_satisfied_concrete() {
+        // Debt: need R2
+        let mut debt = WildDebt::default();
+        debt.concrete.insert(Tile::new(0, 2), 1);
+
+        // Melds that include R2
+        let mut tiles = VecDeque::new();
+        tiles.push_back(Tile::new(0, 1));
+        tiles.push_back(Tile::new(0, 2));
+        tiles.push_back(Tile::new(0, 3));
+        let meld = Meld::new(MeldType::Run, tiles);
+
+        assert!(is_wild_debt_satisfied(&debt, &[meld]));
+    }
+
+    #[test]
+    fn test_is_wild_debt_not_satisfied_concrete() {
+        // Debt: need R2
+        let mut debt = WildDebt::default();
+        debt.concrete.insert(Tile::new(0, 2), 1);
+
+        // Melds that don't include R2
+        let mut tiles = VecDeque::new();
+        tiles.push_back(Tile::new(0, 3));
+        tiles.push_back(Tile::new(0, 4));
+        tiles.push_back(Tile::new(0, 5));
+        let meld = Meld::new(MeldType::Run, tiles);
+
+        assert!(!is_wild_debt_satisfied(&debt, &[meld]));
+    }
+
+    #[test]
+    fn test_is_wild_debt_satisfied_either_or() {
+        // Debt: need Y5 OR K5
+        let mut debt = WildDebt::default();
+        debt.either_or.push((Tile::new(2, 5), Tile::new(3, 5)));
+
+        // Meld includes Y5
+        let mut tiles = VecDeque::new();
+        tiles.push_back(Tile::new(0, 5)); // R5
+        tiles.push_back(Tile::new(1, 5)); // B5
+        tiles.push_back(Tile::new(2, 5)); // Y5
+        let meld = Meld::new(MeldType::Group, tiles);
+
+        assert!(is_wild_debt_satisfied(&debt, &[meld]));
+    }
+
+    #[test]
+    fn test_is_wild_debt_not_satisfied_either_or() {
+        // Debt: need Y5 OR K5
+        let mut debt = WildDebt::default();
+        debt.either_or.push((Tile::new(2, 5), Tile::new(3, 5)));
+
+        // Meld doesn't include Y5 or K5
+        let mut tiles = VecDeque::new();
+        tiles.push_back(Tile::new(0, 5)); // R5
+        tiles.push_back(Tile::new(1, 5)); // B5
+        tiles.push_back(Tile::wild());    // Wild (doesn't count as Y5 or K5)
+        let meld = Meld::new(MeldType::Group, tiles);
+
+        assert!(!is_wild_debt_satisfied(&debt, &[meld]));
+    }
+
+    #[test]
+    fn test_wild_debt_integration_with_replacement() {
+        // Scenario: Table has [R1, Wild, R3], Player has [R2, B1, B2, B3]
+        // Player should be able to pick up the meld and use the wild because they have R2
+        let mut table = Table::new();
+        let mut wild_meld_tiles = VecDeque::new();
+        wild_meld_tiles.push_back(Tile::new(0, 1)); // R1
+        wild_meld_tiles.push_back(Tile::wild());
+        wild_meld_tiles.push_back(Tile::new(0, 3)); // R3
+        table.add_meld(Meld::new(MeldType::Run, wild_meld_tiles));
+
+        let mut hand = Hand::new();
+        hand.add(Tile::new(0, 2)); // R2 - needed to replace wild
+        hand.add(Tile::new(1, 1)); // B1
+        hand.add(Tile::new(1, 2)); // B2
+        hand.add(Tile::new(1, 3)); // B3
+
+        let result = find_best_moves(&mut table, &mut hand, 5000);
+
+        // Should find a solution because player has R2 to pay the wild debt
+        assert!(result.moves.is_some(), "Should find a solution when replacement tile is available");
+    }
+
+    #[test]
+    fn test_wild_debt_integration_no_replacement() {
+        // Scenario: Table has [R1, Wild, R3], Player has [B1, B2, B3] (no R2!)
+        // Player should NOT be able to use the wild from the table
+        let mut table = Table::new();
+        let mut wild_meld_tiles = VecDeque::new();
+        wild_meld_tiles.push_back(Tile::new(0, 1)); // R1
+        wild_meld_tiles.push_back(Tile::wild());
+        wild_meld_tiles.push_back(Tile::new(0, 3)); // R3
+        table.add_meld(Meld::new(MeldType::Run, wild_meld_tiles));
+
+        let mut hand = Hand::new();
+        hand.add(Tile::new(1, 1)); // B1
+        hand.add(Tile::new(1, 2)); // B2
+        hand.add(Tile::new(1, 3)); // B3
+
+        let result = find_best_moves(&mut table, &mut hand, 5000);
+
+        // Should still find a solution (direct play of B1,B2,B3)
+        // but it should NOT involve picking up the table meld
+        assert!(result.moves.is_some());
+        let moves = result.moves.unwrap();
+
+        // Verify no PickUp moves (can't use the wild without R2)
+        let has_pickup = moves.iter().any(|m| matches!(m, SolverMove::PickUp(_)));
+
+        // Note: The solver might still find depth-0 solution (direct play)
+        // The key is that if there IS a pickup, the wild debt must be satisfied
+        if has_pickup {
+            panic!("Should not pick up meld without replacement tile");
+        }
     }
 }
