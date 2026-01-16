@@ -366,6 +366,8 @@ header {
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
+    margin-top: 12px;
+    margin-bottom: 12px;
 }
 
 .remove-meld-btn {
