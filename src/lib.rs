@@ -130,9 +130,41 @@ pub struct Meld {
 }
 
 impl Meld {
-    /// Create a new meld
+    /// Compare two tiles using canonical ordering: color first (r, b, y, k, w), then number
+    fn canonical_tile_cmp(a: &Tile, b: &Tile) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+
+        // Wild tiles should come last
+        match (a.is_wild(), b.is_wild()) {
+            (true, true) => return Ordering::Equal,
+            (true, false) => return Ordering::Greater,
+            (false, true) => return Ordering::Less,
+            _ => {}
+        }
+
+        // Compare by color first
+        let color_a = a.color().unwrap();
+        let color_b = b.color().unwrap();
+
+        match color_a.cmp(&color_b) {
+            Ordering::Equal => {
+                // Same color, compare by number
+                let num_a = a.number().unwrap();
+                let num_b = b.number().unwrap();
+                num_a.cmp(&num_b)
+            }
+            other => other,
+        }
+    }
+
+    /// Create a new meld with tiles sorted in canonical order
     pub fn new(meld_type: MeldType, tiles: VecDeque<Tile>) -> Self {
-        Meld { meld_type, tiles }
+        let mut sorted_tiles: Vec<Tile> = tiles.into_iter().collect();
+        sorted_tiles.sort_by(Self::canonical_tile_cmp);
+        Meld {
+            meld_type,
+            tiles: sorted_tiles.into_iter().collect()
+        }
     }
 
     /// Parse a meld from a string, auto-detecting type

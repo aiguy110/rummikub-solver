@@ -664,6 +664,9 @@ function addMeldToTable() {
             return;
         }
 
+        // Sort tiles in canonical order (same as hands)
+        tiles.sort(sortTiles);
+
         const meld = { type, tiles };
         table.push(meld);
 
@@ -1652,9 +1655,12 @@ function updateTableFromImage(result, processingId, modeLabel) {
                 throw new Error(`Meld must have at least 3 tiles, got ${meld.tiles.length}`);
             }
 
+            // Sort tiles in canonical order
+            const sortedTiles = [...meld.tiles].sort(sortTiles);
+
             const meldObj = {
                 type: meld.type,
-                tiles: meld.tiles
+                tiles: sortedTiles
             };
 
             // Check for duplicates

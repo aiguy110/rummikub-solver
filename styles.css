@@ -362,6 +362,12 @@ header {
 .meld-tile.black { color: var(--color-black); background: #eee; }
 .meld-tile.wild { color: var(--color-wild); background: #f5f; }
 
+.table-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
 .remove-meld-btn {
     background: var(--color-danger);
     color: white;
