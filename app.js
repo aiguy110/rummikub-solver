@@ -1474,6 +1474,11 @@ async function processImageWithOpenAI(base64Image, mode, processingId, modeLabel
         const prompt = mode === 'hand' ? handPrompt : tablePrompt;
         const tool = mode === 'hand' ? EXTRACT_HAND_TOOL : EXTRACT_TABLE_TOOL;
 
+        // Log request details (excluding base64 image for brevity)
+        console.log(`[API Request] Model: ${modelName}, Mode: ${mode}`);
+        console.log(`[API Request] Prompt: ${prompt}`);
+        console.log(`[API Request] Tool: ${tool.function.name}`);
+
         const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -1536,6 +1541,12 @@ async function processImageWithOpenAI(base64Image, mode, processingId, modeLabel
         }
 
         const data = await response.json();
+
+        // Log response message content and tool calls
+        const messageContent = data.choices?.[0]?.message?.content;
+        const toolCalls = data.choices?.[0]?.message?.tool_calls;
+        console.log(`[API Response] Message content: ${messageContent || '(none)'}`);
+        console.log(`[API Response] Tool calls:`, toolCalls || '(none)');
 
         if (!data.choices || data.choices.length === 0) {
             showToast(`${modeLabel} Processing Failed`, 'Invalid API response: No choices returned', 'error', 8000);
