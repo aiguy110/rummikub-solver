@@ -1009,11 +1009,13 @@ footer a:hover {
 
 .toggle-switch {
     position: relative;
+    display: inline-block;
     width: 40px;
     height: 20px;
     background: var(--color-secondary);
     border-radius: 10px;
     transition: background 0.3s;
+    flex-shrink: 0;
 }
 
 .toggle-switch::after {
@@ -1026,6 +1028,7 @@ footer a:hover {
     background: white;
     border-radius: 50%;
     transition: transform 0.3s;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 .debug-toggle input[type="checkbox"]:checked + .toggle-switch {

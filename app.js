@@ -1781,6 +1781,7 @@ function attachEventListeners() {
     document.getElementById('clear-logs-btn').addEventListener('click', clearLogs);
     document.getElementById('show-debug-logs').addEventListener('change', (e) => {
         showDebugLogs = e.target.checked;
+        console.log(`Debug logging ${showDebugLogs ? 'enabled' : 'disabled'}`);
         updateLogsDisplay();
     });
     document.getElementById('logs-modal').addEventListener('click', (e) => {
